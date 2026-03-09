@@ -113,20 +113,39 @@ pub fn ask_ai_addr(server_addr: SocketAddr, prompt: &str) -> Result<String, Stri
 }
 
 async fn async_run(server_addr: SocketAddr, prompt: &str, provider: Arc<CryptoProvider>) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
     let client_config = configure_client(provider)?;
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
     endpoint.set_default_client_config(client_config);
 
-    let connection = endpoint
-        .connect(server_addr, "localhost")?
-        .await
-        .map_err(|e| format!("connection failed: {e}"))?;
+    let server_name = server_addr.ip().to_string();
+    let connection = match tokio::time::timeout(
+        TIMEOUT,
+        endpoint.connect(server_addr, &server_name)?,
+    )
+    .await
+    {
+        Ok(Ok(conn)) => conn,
+        Ok(Err(e)) => return Err(format!("connection failed: {e}").into()),
+        Err(_) => return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "connection timeout (check server address and network)",
+        ).into()),
+    };
 
     let (mut send, mut recv) = connection.open_bi().await?;
     send.write_all(prompt.as_bytes()).await?;
     send.finish()?;
 
-    let response = recv.read_to_end(64 * 1024).await?;
+    let response = match tokio::time::timeout(TIMEOUT, recv.read_to_end(64 * 1024)).await {
+        Ok(Ok(data)) => data,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "response timeout (server may be slow or unreachable)",
+        ).into()),
+    };
     let result = String::from_utf8_lossy(&response).to_string();
 
     connection.close(0u32.into(), b"done");

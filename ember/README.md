@@ -153,6 +153,10 @@ cargo run -p ember-client -- yourname.duckdns.org:4433   # via internet
 
 The client disables certificate verification for development. For production, use proper certificates (e.g. Let’s Encrypt) or pin the server’s certificate.
 
+## Development
+
+For engineering notes (removing file locks, build commands, troubleshooting), see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
 ## Dependencies
 
 - [quinn](https://github.com/quinn-rs/quinn) — QUIC implementation
