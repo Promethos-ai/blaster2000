@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package de.kherud.grpc.llm;
+
+option optimize_for = SPEED;
+
+service LLM {
+  rpc status(GetStatusRequest) returns (GetStatusReply);
+  rpc complete(CompleteRequest) returns (CompleteReply);
+}
+
+message GetStatusRequest {}
+
+message GetStatusReply {
+  bool available = 1;
+}
+
+message CompleteRequest {
+  Prompt prompt = 1;
+  InferenceParameters parameters = 3;
+}
+
+message CompleteReply {
+  string response = 1;
+}
+
+message Prompt {
+  oneof prompt {
+    ChatPrompt chat = 1;
+    InfillPrompt infill = 2;
+  }
+}
+
+message ChatPrompt {
+  string prompt = 1;
+}
+
+message InfillPrompt {
+  string prefix = 1;
+  string suffix = 2;
+}
+
+message InferenceParameters {
+  optional int32 n_predict = 4;
+  optional float temp = 12;
+  optional int32 top_k = 7;
+  optional float top_p = 8;
+  optional int32 penalty_last_n = 13;
+  optional float penalty_repeat = 14;
+}

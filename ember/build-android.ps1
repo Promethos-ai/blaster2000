@@ -1,0 +1,64 @@
+# Build the Ember Android app and produce an APK.
+# Requires: Rust, cargo-ndk, Android SDK/NDK (via Android Studio)
+
+$ErrorActionPreference = "Stop"
+$rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Server address is hardcoded in android/app/src/main/res/values/server_defaults.xml
+
+# Build Rust library for Android
+Write-Host "Building Rust library for Android..." -ForegroundColor Cyan
+$jniLibs = Join-Path $rootDir "android\app\src\main\jniLibs"
+New-Item -ItemType Directory -Force -Path $jniLibs | Out-Null
+
+Push-Location $rootDir
+try {
+    cargo ndk -t arm64-v8a -t armeabi-v7a -o $jniLibs build -p ember-client --features android --release
+    if ($LASTEXITCODE -ne 0) { throw "cargo ndk failed" }
+} finally {
+    Pop-Location
+}
+
+# Build Android APK
+Write-Host "`nBuilding Android APK..." -ForegroundColor Cyan
+Push-Location (Join-Path $rootDir "android")
+try {
+    # Set ANDROID_HOME if not already set (Gradle needs this)
+    if (-not $env:ANDROID_HOME) {
+        $sdkPath = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+        if (Test-Path $sdkPath) {
+            $env:ANDROID_HOME = $sdkPath
+        }
+    }
+    # Use gradlew.bat on Windows; ensure JAVA_HOME for Android Studio's JBR if not set
+    if (-not $env:JAVA_HOME) {
+        $jbrPaths = @(
+            "C:\Program Files\Android\Android Studio\jbr",
+            "$env:LOCALAPPDATA\Programs\Android Studio\jbr"
+        )
+        foreach ($p in $jbrPaths) {
+            if (Test-Path (Join-Path $p "bin\java.exe")) {
+                $env:JAVA_HOME = $p
+                break
+            }
+        }
+    }
+    if (Test-Path "gradlew.bat") {
+        .\gradlew.bat assembleRelease
+    } else {
+        .\gradlew assembleRelease
+    }
+    if ($LASTEXITCODE -ne 0) { throw "gradle build failed" }
+} finally {
+    Pop-Location
+}
+
+$apkPath = Join-Path $rootDir "android\app\build\outputs\apk\release\app-release-unsigned.apk"
+$signedPath = Join-Path $rootDir "android\app\build\outputs\apk\release\app-release.apk"
+if (Test-Path $signedPath) {
+    $apkPath = $signedPath
+}
+Write-Host "`nDone! APK: $apkPath" -ForegroundColor Green
+if (-not (Test-Path $signedPath)) {
+    Write-Host "To sign: create android/keystore.properties (see keystore.properties.example), then rebuild. Or run .\sign-apk.ps1" -ForegroundColor Yellow
+}

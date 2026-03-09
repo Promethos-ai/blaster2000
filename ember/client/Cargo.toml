@@ -1,0 +1,21 @@
+[package]
+name = "ember-client"
+version = "0.1.0"
+edition = "2021"
+description = "Rudimentary Quinn QUIC client (run on Android or desktop)"
+
+[lib]
+name = "ember_native"
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[dependencies]
+quinn = "0.11"
+rustls = { version = "0.23", features = ["ring"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros"] }
+bytes = "1"
+jni = { version = "0.21", optional = true }
+
+[features]
+default = []
+android = ["jni"]
+ios = []

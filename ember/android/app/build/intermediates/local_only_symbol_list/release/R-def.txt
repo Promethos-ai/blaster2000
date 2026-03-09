@@ -1,0 +1,36 @@
+R_DEF: Internal format may change without notice
+local
+color black
+color purple_200
+color purple_500
+color purple_700
+color teal_200
+color teal_700
+color white
+drawable ic_launcher
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+drawable ic_mic
+id ask_btn
+id mic_btn
+id prompt_input
+id result_text
+id server_address
+layout activity_main
+mipmap ic_launcher
+mipmap ic_launcher_round
+string app_name
+string ask_ai
+string asking
+string default_server_address
+string error_prompt
+string error_server
+string error_voice
+string listening
+string mic_desc
+string prompt_hint
+string prompt_label
+string response_label
+string server_address_hint
+string server_label
+style Theme.Ember

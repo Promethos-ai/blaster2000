@@ -1,0 +1,4 @@
+#Mon Mar 09 04:24:49 PDT 2026
+base.0=D\:\\rust\\ember\\android\\app\\build\\intermediates\\dex\\release\\mergeDexRelease\\classes.dex
+path.0=classes.dex
+renamed.0=classes.dex
