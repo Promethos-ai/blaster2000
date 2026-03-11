@@ -3,7 +3,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:fillViewport="true"
+    android:background="@color/background_dark">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -15,8 +16,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
-            android:textSize="22sp"
+            android:textSize="24sp"
             android:textStyle="bold"
+            android:textColor="@color/text_primary"
             android:layout_marginBottom="8dp" />
 
         <TextView
@@ -24,14 +26,19 @@
             android:layout_height="wrap_content"
             android:text="@string/server_label"
             android:textSize="12sp"
-            android:textColor="?android:attr/textColorSecondary"
+            android:textColor="@color/text_secondary"
             android:layout_marginBottom="4dp" />
 
         <EditText
             android:id="@+id/server_address"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:padding="14dp"
             android:hint="@string/server_address_hint"
+            android:textColorHint="@color/text_secondary"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/input_field_bg"
             android:inputType="textUri"
             android:imeOptions="actionNext"
             android:layout_marginBottom="20dp" />
@@ -41,7 +48,7 @@
             android:layout_height="wrap_content"
             android:text="@string/prompt_label"
             android:textSize="12sp"
-            android:textColor="?android:attr/textColorSecondary"
+            android:textColor="@color/text_secondary"
             android:layout_marginBottom="4dp" />
 
         <LinearLayout
@@ -58,8 +65,12 @@
                 android:layout_height="wrap_content"
                 android:minLines="2"
                 android:minHeight="48dp"
+                android:padding="14dp"
                 android:inputType="textMultiLine|textCapSentences"
-                android:hint="@string/prompt_hint" />
+                android:hint="@string/prompt_hint"
+                android:textColorHint="@color/text_secondary"
+                android:textColor="@color/text_primary"
+                android:background="@drawable/input_field_bg" />
 
             <ImageButton
                 android:id="@+id/mic_btn"
@@ -68,6 +79,7 @@
                 android:layout_marginStart="8dp"
                 android:contentDescription="@string/mic_desc"
                 android:src="@drawable/ic_mic"
+                android:tint="@color/accent_blue"
                 android:background="?attr/selectableItemBackgroundBorderless" />
         </LinearLayout>
 
@@ -75,7 +87,11 @@
             android:id="@+id/ask_btn"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:minHeight="52dp"
             android:text="@string/ask_ai"
+            android:textColor="@color/white"
+            android:textAllCaps="false"
+            android:background="@drawable/btn_primary"
             android:layout_marginBottom="16dp" />
 
         <TextView
@@ -83,7 +99,7 @@
             android:layout_height="wrap_content"
             android:text="@string/response_label"
             android:textSize="12sp"
-            android:textColor="?android:attr/textColorSecondary"
+            android:textColor="@color/text_secondary"
             android:layout_marginBottom="4dp" />
 
         <TextView
@@ -91,10 +107,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="80dp"
-            android:padding="12dp"
-            android:background="@android:drawable/dialog_holo_light_frame"
-            android:textSize="14sp"
-            android:lineSpacingMultiplier="1.2" />
+            android:padding="14dp"
+            android:background="@drawable/response_bubble"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp"
+            android:lineSpacingMultiplier="1.25" />
 
     </LinearLayout>
 </ScrollView>

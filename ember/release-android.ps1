@@ -42,19 +42,22 @@ if (-not $repoRoot) {
 }
 
 # Create release
-Push-Location $repoRoot
-try {
-    Write-Host "Creating release $Version..." -ForegroundColor Cyan
-    gh release create $Version `
-        --title "Ember Android $Version" `
-        --notes "Ember QUIC client for Android. Connect to your ember server from a smartphone.
+$notes = @"
+Ember QUIC client for Android. Connect to your ember server from a smartphone.
 
 **Install:** Copy APK to phone and install (enable 'Install from unknown sources' if needed).
 
 **Usage:** Enter server address (e.g. 192.168.1.100:4433) and tap Connect.
 
-**Server:** Run \`cargo run --bin ember_server\` (or \`ember-server\`) on your PC." `
-        $apk `
+**Server:** Run: cargo run -p ember-server on your PC.
+"@
+$notesFile = Join-Path $env:TEMP "ember-release-notes.md"
+$notes | Set-Content -Path $notesFile -Encoding UTF8
+
+Push-Location $repoRoot
+try {
+    Write-Host "Creating release $Version..." -ForegroundColor Cyan
+    gh release create $Version --title "Ember Android $Version" --notes-file $notesFile $apk
     Write-Host "Release created: $Version" -ForegroundColor Green
 } catch {
     Write-Host "Release may already exist. Trying to upload asset only..." -ForegroundColor Yellow
@@ -62,4 +65,5 @@ try {
     Write-Host "Asset uploaded." -ForegroundColor Green
 } finally {
     Pop-Location
+    Remove-Item $notesFile -ErrorAction SilentlyContinue
 }

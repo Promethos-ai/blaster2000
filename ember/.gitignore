@@ -1,4 +1,5 @@
 /target/
+ember-connections.log
 ios/Ember/lib/
 ember.keystore
 *.keystore

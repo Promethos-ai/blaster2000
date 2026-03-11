@@ -13,4 +13,5 @@
     <string name="error_prompt">Enter a question</string>
     <string name="error_voice">Voice not available</string>
     <string name="listening">Listening…</string>
+    <string name="splash_desc">Promethos</string>
 </resources>

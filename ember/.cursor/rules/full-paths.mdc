@@ -1,0 +1,24 @@
+---
+description: Always use full paths when describing files and scripts
+alwaysApply: true
+---
+
+# Full Paths
+
+When describing files and scripts, always use **full paths** (absolute or workspace-relative from project root), not just filenames.
+
+## Examples
+
+- ✅ `d:\rust\ember\client\src\lib.rs`
+- ✅ `d:\rust\ember\server\src\main.rs`
+- ✅ `d:\rust\ember\build-android.ps1`
+- ❌ `lib.rs`
+- ❌ `main.rs`
+- ❌ `build-android.ps1`
+
+## Scripts
+
+When mentioning PowerShell scripts or other executable scripts, include the full path:
+- `d:\rust\ember\build-android.ps1`
+- `d:\rust\ember\sign-apk.ps1`
+- `d:\rust\ember\release-android.ps1`

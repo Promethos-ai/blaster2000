@@ -100,13 +100,22 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    EmberClient.ask(addr, prompt)
+                    EmberClient.askStreaming(addr, prompt, TokenCallback { token ->
+                        runOnUiThread {
+                            if (resultText.text == getString(R.string.asking)) {
+                                resultText.text = ""
+                            }
+                            resultText.append(token)
+                        }
+                    })
                 } catch (e: Exception) {
                     "Error: ${e.message}"
                 }
             }
-            resultText.text = result
-            askBtn.isEnabled = true
+            runOnUiThread {
+                resultText.text = result
+                askBtn.isEnabled = true
+            }
         }
     }
 }
