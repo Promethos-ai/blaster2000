@@ -1,9 +1,9 @@
 /target/
 ember-connections.log
+pinggy-win-x64.exe
 ios/Ember/lib/
 ember.keystore
 *.keystore
 android/keystore.properties
-android/app/src/main/res/values/server_defaults.xml
 android/.gradle/
 android/app/build/
