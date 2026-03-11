@@ -88,6 +88,14 @@ class ChatAdapter(
         }
     }
 
+    fun getMessages(): List<ChatMessage> = messages.toList()
+
+    fun restoreMessages(restored: List<ChatMessage>) {
+        messages.clear()
+        messages.addAll(restored)
+        notifyDataSetChanged()
+    }
+
     private class UserViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val textView: TextView = view.findViewById(R.id.message_text)
     }

@@ -19,6 +19,11 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val KEY_CHAT_TEXTS = "chat_texts"
+        private const val KEY_CHAT_IS_USER = "chat_is_user"
+    }
+
     private lateinit var serverInput: EditText
     private lateinit var promptInput: EditText
     private lateinit var askBtn: Button
@@ -64,7 +69,18 @@ class MainActivity : AppCompatActivity() {
         promptInput.hint = getString(R.string.prompt_hint)
 
         chatAdapter = ChatAdapter()
+        savedInstanceState?.getStringArray(KEY_CHAT_TEXTS)?.let { texts ->
+            savedInstanceState.getBooleanArray(KEY_CHAT_IS_USER)?.let { isUser ->
+                if (texts.size == isUser.size) {
+                    val restored = texts.indices.map { i ->
+                        ChatMessage(texts[i], isUser[i])
+                    }
+                    chatAdapter.restoreMessages(restored)
+                }
+            }
+        }
         chatRecycler.layoutManager = LinearLayoutManager(this).apply {
+            reverseLayout = true
             stackFromEnd = true
         }
         chatRecycler.adapter = chatAdapter
@@ -86,6 +102,13 @@ class MainActivity : AppCompatActivity() {
                 else -> askAi(addr, prompt)
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        val msgs = chatAdapter.getMessages()
+        outState.putStringArray(KEY_CHAT_TEXTS, msgs.map { it.text }.toTypedArray())
+        outState.putBooleanArray(KEY_CHAT_IS_USER, msgs.map { it.isUser }.toBooleanArray())
     }
 
     private fun startVoiceInput() {
