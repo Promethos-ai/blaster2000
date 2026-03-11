@@ -90,7 +90,14 @@ fn configure_client(provider: Arc<CryptoProvider>) -> Result<ClientConfig, Box<d
 
 /// Ask the AI a question via the ember server (which forwards to Feb17 inference).
 pub fn ask_ai(server_addr: impl ToSocketAddrs, prompt: &str) -> Result<String, String> {
-    let addrs: Vec<SocketAddr> = server_addr.to_socket_addrs().map_err(|e| e.to_string())?.collect();
+    let addrs: Vec<SocketAddr> = server_addr.to_socket_addrs().map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("lookup") || msg.contains("hostname") || msg.contains("no address") {
+            format!("Could not resolve hostname. Check: (1) tunnel is running (e.g. Pinggy), (2) device has internet, (3) hostname is correct.")
+        } else {
+            msg
+        }
+    })?.collect();
     let server_addr = addrs
         .iter()
         .find(|a| a.is_ipv4())
