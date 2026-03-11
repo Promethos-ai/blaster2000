@@ -6,12 +6,13 @@ import android.speech.RecognizerIntent
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -22,7 +23,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var promptInput: EditText
     private lateinit var askBtn: Button
     private lateinit var micBtn: ImageButton
-    private lateinit var resultText: TextView
+    private lateinit var chatRecycler: RecyclerView
+    private lateinit var chatAdapter: ChatAdapter
 
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -56,10 +58,16 @@ class MainActivity : AppCompatActivity() {
         promptInput = findViewById(R.id.prompt_input)
         askBtn = findViewById(R.id.ask_btn)
         micBtn = findViewById(R.id.mic_btn)
-        resultText = findViewById(R.id.result_text)
+        chatRecycler = findViewById(R.id.chat_recycler)
 
-        serverInput.setText(getString(R.string.default_server_address), TextView.BufferType.EDITABLE)
+        serverInput.setText(getString(R.string.default_server_address), android.widget.TextView.BufferType.EDITABLE)
         promptInput.hint = getString(R.string.prompt_hint)
+
+        chatAdapter = ChatAdapter()
+        chatRecycler.layoutManager = LinearLayoutManager(this).apply {
+            stackFromEnd = true
+        }
+        chatRecycler.adapter = chatAdapter
 
         micBtn.setOnClickListener {
             when {
@@ -93,19 +101,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun scrollToBottom() {
+        chatRecycler.post {
+            if (chatAdapter.itemCount > 0) {
+                chatRecycler.smoothScrollToPosition(chatAdapter.itemCount - 1)
+            }
+        }
+    }
+
     private fun askAi(addr: String, prompt: String) {
+        promptInput.setText("")
         askBtn.isEnabled = false
-        resultText.text = getString(R.string.asking)
+
+        chatAdapter.addUserMessage(prompt)
+        chatAdapter.addAiMessage(getString(R.string.asking))
+        scrollToBottom()
 
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
                     EmberClient.askStreaming(addr, prompt, TokenCallback { token ->
                         runOnUiThread {
-                            if (resultText.text == getString(R.string.asking)) {
-                                resultText.text = ""
-                            }
-                            resultText.append(token)
+                            chatAdapter.appendTokenToLastAi(token, getString(R.string.asking))
+                            scrollToBottom()
                         }
                     })
                 } catch (e: Exception) {
@@ -113,8 +131,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             runOnUiThread {
-                resultText.text = result
+                chatAdapter.updateLastAiMessage(result)
                 askBtn.isEnabled = true
+                scrollToBottom()
             }
         }
     }

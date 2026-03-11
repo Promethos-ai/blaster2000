@@ -1,81 +1,85 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true"
+    android:orientation="vertical"
     android:background="@color/background_dark">
 
+    <!-- Header with app name and server -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="16dp"
+        android:paddingBottom="8dp">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
-            android:textSize="24sp"
+            android:textSize="20sp"
             android:textStyle="bold"
             android:textColor="@color/text_primary"
-            android:layout_marginBottom="8dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/server_label"
-            android:textSize="12sp"
-            android:textColor="@color/text_secondary"
             android:layout_marginBottom="4dp" />
 
         <EditText
             android:id="@+id/server_address"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:minHeight="48dp"
-            android:padding="14dp"
+            android:minHeight="40dp"
+            android:padding="10dp"
             android:hint="@string/server_address_hint"
             android:textColorHint="@color/text_secondary"
             android:textColor="@color/text_primary"
             android:background="@drawable/input_field_bg"
             android:inputType="textUri"
-            android:imeOptions="actionNext"
-            android:layout_marginBottom="20dp" />
+            android:textSize="13sp" />
+    </LinearLayout>
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/prompt_label"
-            android:textSize="12sp"
-            android:textColor="@color/text_secondary"
-            android:layout_marginBottom="4dp" />
+    <!-- Chat messages (user right, AI left) -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/chat_recycler"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="8dp" />
+
+    <!-- Input area -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:background="@color/background_dark">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="8dp">
 
             <EditText
                 android:id="@+id/prompt_input"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:minLines="2"
-                android:minHeight="48dp"
-                android:padding="14dp"
+                android:minLines="1"
+                android:minHeight="44dp"
+                android:padding="12dp"
                 android:inputType="textMultiLine|textCapSentences"
                 android:hint="@string/prompt_hint"
                 android:textColorHint="@color/text_secondary"
                 android:textColor="@color/text_primary"
-                android:background="@drawable/input_field_bg" />
+                android:background="@drawable/input_field_bg"
+                android:maxLines="4" />
 
             <ImageButton
                 android:id="@+id/mic_btn"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:layout_marginStart="8dp"
                 android:contentDescription="@string/mic_desc"
                 android:src="@drawable/ic_mic"
@@ -87,31 +91,10 @@
             android:id="@+id/ask_btn"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:minHeight="52dp"
+            android:minHeight="48dp"
             android:text="@string/ask_ai"
             android:textColor="@color/white"
             android:textAllCaps="false"
-            android:background="@drawable/btn_primary"
-            android:layout_marginBottom="16dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/response_label"
-            android:textSize="12sp"
-            android:textColor="@color/text_secondary"
-            android:layout_marginBottom="4dp" />
-
-        <TextView
-            android:id="@+id/result_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="80dp"
-            android:padding="14dp"
-            android:background="@drawable/response_bubble"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:lineSpacingMultiplier="1.25" />
-
+            android:background="@drawable/btn_primary" />
     </LinearLayout>
-</ScrollView>
+</LinearLayout>
