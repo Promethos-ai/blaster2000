@@ -93,7 +93,7 @@ pub fn ask_ai(server_addr: impl ToSocketAddrs, prompt: &str) -> Result<String, S
     let addrs: Vec<SocketAddr> = server_addr.to_socket_addrs().map_err(|e| {
         let msg = e.to_string();
         if msg.contains("lookup") || msg.contains("hostname") || msg.contains("no address") {
-            format!("Could not resolve hostname. Check: (1) tunnel is running (e.g. Pinggy), (2) device has internet, (3) hostname is correct.")
+            format!("Could not resolve hostname. Check: (1) proxy reachable (e.g. eagleoneonline.ca), (2) device has internet, (3) hostname is correct.")
         } else {
             msg
         }

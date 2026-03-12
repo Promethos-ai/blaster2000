@@ -68,7 +68,7 @@ pub extern "system" fn Java_com_ember_android_EmberClient_askStreaming(
         Err(e) => {
             let msg = e.to_string();
             let friendly = if msg.contains("lookup") || msg.contains("hostname") || msg.contains("no address") {
-                "Could not resolve hostname. Check: (1) tunnel is running (e.g. Pinggy), (2) device has internet, (3) hostname is correct."
+                "Could not resolve hostname. Check: (1) proxy reachable (e.g. eagleoneonline.ca), (2) device has internet, (3) hostname is correct."
             } else {
                 &msg
             };

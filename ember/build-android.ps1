@@ -1,10 +1,27 @@
 # Build the Ember Android app and produce an APK.
 # Requires: Rust, cargo-ndk, Android SDK/NDK (via Android Studio)
+#
+# Usage: .\build-android.ps1 [-Clean]
+#   -Clean  Run cargo clean first (fixes "Blocking waiting for file lock" errors)
+
+param([switch]$Clean)
 
 $ErrorActionPreference = "Stop"
 $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # Server address is hardcoded in android/app/src/main/res/values/server_defaults.xml
+
+# Clear stale Cargo locks (e.g. from crashed/stopped builds)
+$targetDir = Join-Path $rootDir "target"
+if (Test-Path $targetDir) {
+    Get-ChildItem -Path $targetDir -Recurse -Force -Filter ".cargo-lock" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+}
+if ($Clean) {
+    Write-Host "Running cargo clean (removes target/)..." -ForegroundColor Yellow
+    Push-Location $rootDir
+    cargo clean
+    Pop-Location
+}
 
 # Build Rust library for Android
 Write-Host "Building Rust library for Android..." -ForegroundColor Cyan
