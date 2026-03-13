@@ -280,7 +280,7 @@ fn spawn_proactive_task(
         interval.tick().await; // skip first immediate tick
         loop {
             interval.tick().await;
-            let llm_prompt = format_prompt("", true, "");
+            let llm_prompt = format_prompt("", true, "", false);
             match call_inference_stream(&grpc_client, inference_addr.as_str(), &llm_prompt, params_file.as_str()).await {
                 Ok(mut stream) => {
                     let mut text = String::new();
@@ -556,7 +556,7 @@ async fn handle_stream(
             drop(q);
             stream_queued_proactive(send, &msg, interaction_id, conn_log, &remote).await
         } else {
-            let llm_prompt = format_prompt(&prompt, true, "");
+            let llm_prompt = format_prompt(&prompt, true, "", false);
             stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file).await
         }
     } else {
@@ -572,7 +572,8 @@ async fn handle_stream(
         if !web_ctx.is_empty() {
             log("BRAVE", &format!("injected {} chars of web context", web_ctx.len()));
         }
-        let llm_prompt = format_prompt(&prompt, false, &web_ctx);
+        let is_weather = prompt.to_lowercase().contains("weather");
+        let llm_prompt = format_prompt(&prompt, false, &web_ctx, is_weather);
         stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file).await
     };
 
@@ -597,17 +598,22 @@ checking in with you. Generate a warm, brief greeting (2-4 sentences). Mention a
 their attention today: duties, potential issues, or opportunities. Be conversational and supportive. \
 If you don't have specific information, offer a general supportive check-in.";
 
-fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str) -> String {
+const WEATHER_FORMAT_INSTRUCTION: &str = "\n\n[When answering weather questions, format your response as a compact HTML weather dashboard. Use only div, span, p, strong, em. No html/body tags—just inner markup. Use cards (div with padding/border), icons as Unicode (☀️ 🌧️ ❄️ 🌤️ ⛈️ 🌫️), and a clear hierarchy. Keep it mobile-friendly.]";
+
+fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weather: bool) -> String {
     let (system, user_part) = if is_check_in {
         (CHECK_IN_PROMPT, "The user is checking in.")
     } else {
         (SYSTEM_PROMPT, user_msg)
     };
-    let system_with_web = if web_context.is_empty() {
+    let mut system_with_web = if web_context.is_empty() {
         system.to_string()
     } else {
         format!("{system}{web_context}")
     };
+    if is_weather {
+        system_with_web.push_str(WEATHER_FORMAT_INSTRUCTION);
+    }
     format!(
         "<|im_start|>system\n{system_with_web}<|im_end|>\n<|im_start|>user\n{user_part}<|im_end|>\n<|im_start|>assistant\n"
     )

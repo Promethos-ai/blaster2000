@@ -32,9 +32,10 @@ object ChatWebView {
     }
 
     fun updateLastAiMessage(webView: WebView, text: String) {
-        val escaped = escapeJs(text)
+        val content = contentToHtml(text)
+        val escaped = escapeJs(content)
         webView.evaluateJavascript(
-            "var el = document.getElementById('streaming-msg'); if (el) el.textContent = $escaped;",
+            "var el = document.getElementById('streaming-msg'); if (el) el.innerHTML = $escaped;",
             null
         )
     }
@@ -49,12 +50,28 @@ object ChatWebView {
             val cls = if (msg.isUser) "user" else "ai"
             val idAttr = if (i == messages.lastIndex && !msg.isUser) " id=\"streaming-msg\"" else ""
             sb.append("<div class=\"message $cls\"$idAttr>")
-            sb.append(escapeHtml(msg.text))
+            sb.append(if (msg.isUser) escapeHtml(msg.text) else contentToHtml(msg.text))
             sb.append("</div>")
         }
         sb.append("</div></body></html>")
         return sb.toString()
     }
+
+    /** Renders AI content: HTML dashboard if it looks like one, else escaped text. */
+    private fun contentToHtml(text: String): String {
+        val trimmed = text.trimStart()
+        if (trimmed.startsWith("<div") || trimmed.startsWith("<section") || trimmed.startsWith("<article")) {
+            return sanitizeHtml(text)
+        }
+        return escapeHtml(text)
+    }
+
+    /** Allow safe HTML tags; strip script, event handlers, etc. */
+    private fun sanitizeHtml(s: String): String = s
+        .replace(Regex("<script[^>]*>", RegexOption.IGNORE_CASE), "<!--")
+        .replace(Regex("</script>", RegexOption.IGNORE_CASE), "-->")
+        .replace(Regex("\\son\\w+\\s*=", RegexOption.IGNORE_CASE)) { " data-removed=" }
+        .replace("javascript:", "")
 
     private fun escapeHtml(s: String): String = s
         .replace("&", "&amp;")

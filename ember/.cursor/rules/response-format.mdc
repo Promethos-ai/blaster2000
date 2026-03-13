@@ -1,0 +1,32 @@
+---
+description: Response format - visually rich, structured sections with cards, tables, dashboards
+alwaysApply: true
+---
+
+# Response Format
+
+## Core Principles
+
+- **Always respond with visually rich, well-structured sections.**
+- **Prefer cards, tables, icons, and headings over plain bullets when possible.**
+- **If the topic is weather, news, schedule, or stats, build a mini dashboard-style layout.**
+
+## Structure
+
+Use clear hierarchy:
+- `##` for major sections
+- `###` for subsections
+- Tables for comparisons, lists, or data
+- Blockquotes or card-like blocks for key points
+- Icons/emoji sparingly for visual anchors when helpful
+
+## Dashboard-Style Topics
+
+For weather, news, schedule, or stats:
+- Use a compact, scannable layout
+- Group related info in logical blocks
+- Prefer tables or structured grids over long paragraphs
+
+## Weather Responses
+
+When the user asks for weather, render a compact weather dashboard in HTML (no `<html>`/`<body>` tags, just the inner markup). Use cards, icons (as text/Unicode), and a clear hierarchy. Keep it mobile-friendly.

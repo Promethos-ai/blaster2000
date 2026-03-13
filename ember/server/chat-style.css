@@ -48,3 +48,13 @@ body {
   border-left: 4px solid #c45c26;
   box-shadow: 0 2px 12px rgba(196, 92, 38, 0.12);
 }
+
+/* Weather dashboard: nested cards, mobile-friendly */
+.message.ai div {
+  margin: 8px 0;
+}
+.message.ai div[style*="border"],
+.message.ai div[style*="padding"] {
+  border-radius: 8px;
+  max-width: 100%;
+}

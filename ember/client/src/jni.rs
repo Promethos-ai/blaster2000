@@ -1,5 +1,6 @@
 //! JNI bindings for Android. Built only with the "android" feature.
 
+use std::panic;
 use std::sync::mpsc;
 
 use jni::objects::{JClass, JObject, JString, JValue};
@@ -69,12 +70,15 @@ pub extern "system" fn Java_com_ember_android_EmberClient_askStreaming(
     let addr_str = addr_str.clone();
     let prompt_str = prompt_str.clone();
     std::thread::spawn(move || {
-        let res = crate::ask_ai_streaming(&addr_str, &prompt_str, |token| {
-            let _ = tx.send(Ok(StreamItem::Token(token.to_string())));
-        });
+        let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            crate::ask_ai_streaming(&addr_str, &prompt_str, |token| {
+                let _ = tx.send(Ok(StreamItem::Token(token.to_string())));
+            })
+        }));
         match res {
-            Ok(s) => { let _ = tx.send(Ok(StreamItem::Complete(s))); }
-            Err(e) => { let _ = tx.send(Err(e)); }
+            Ok(Ok(s)) => { let _ = tx.send(Ok(StreamItem::Complete(s))); }
+            Ok(Err(e)) => { let _ = tx.send(Err(e)); }
+            Err(_) => { let _ = tx.send(Err("The app encountered an unexpected error. Please try again.".to_string())); }
         }
     });
 
