@@ -20,6 +20,7 @@ use rustls::DigitallySignedStruct;
 use rustls::crypto::CryptoProvider;
 use rustls::{ClientConfig as RustlsClientConfig, SignatureScheme};
 use serde_json::json;
+use tokio::io::AsyncWriteExt;
 use tokio_stream::{StreamExt, Stream};
 use tonic::transport::Channel;
 use tonic::{Code, Request};
@@ -186,6 +187,7 @@ fn log_connection(log: &Option<Arc<std::sync::Mutex<std::fs::File>>>, remote: &S
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    dotenvy::dotenv().ok();
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to install rustls crypto provider");
@@ -194,6 +196,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut log_file: Option<String> = Some("ember-connections.log".to_string());
     let mut style_file = "server/chat-style.css".to_string();
     let mut params_file = "inference_params.json".to_string();
+    let mut web_search = false;
+    let mut web_search_always = false;
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -222,6 +226,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             i += 2;
             continue;
         }
+        if args[i] == "--web-search" {
+            web_search = true;
+            i += 1;
+            continue;
+        }
+        if args[i] == "--web-search-always" {
+            web_search_always = true;
+            i += 1;
+            continue;
+        }
         i += 1;
     }
 
@@ -245,7 +259,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let style_file = Arc::new(style_file);
     let params_file = Arc::new(params_file);
-    run(listen_addr, inference_addr, conn_log, proactive_queue.clone(), style_file, params_file)
+    let brave_key = std::env::var("BRAVE_API_KEY").unwrap_or_default();
+    if web_search && brave_key.is_empty() {
+        log_err("SERVER", "BRAVE_API_KEY not set; web search disabled. Set it to enable.");
+        log_err("SERVER", "Get a key at https://api.search.brave.com");
+    }
+    let web_search = Arc::new((web_search, web_search_always, brave_key));
+    run(listen_addr, inference_addr, conn_log, proactive_queue.clone(), style_file, params_file, web_search)
 }
 
 /// Background task: every 30 min, generate a proactive check-in and push to queue.
@@ -260,7 +280,7 @@ fn spawn_proactive_task(
         interval.tick().await; // skip first immediate tick
         loop {
             interval.tick().await;
-            let llm_prompt = format_prompt("", true);
+            let llm_prompt = format_prompt("", true, "");
             match call_inference_stream(&grpc_client, inference_addr.as_str(), &llm_prompt, params_file.as_str()).await {
                 Ok(mut stream) => {
                     let mut text = String::new();
@@ -366,6 +386,7 @@ async fn run(
     proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
     style_file: Arc<String>,
     params_file: Arc<String>,
+    web_search: Arc<(bool, bool, String)>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server_config = configure_server()?;
     let endpoint = Endpoint::server(server_config, listen_addr)?;
@@ -373,6 +394,9 @@ async fn run(
     log("SERVER", &format!("listening on {}", endpoint.local_addr()?));
     log("SERVER", &format!("inference: {} (QUIC if https://, TCP if http://)", inference_addr));
     log("SERVER", &format!("params file: {} (edit between requests to tune output)", params_file.as_str()));
+    if web_search.0 {
+        log("SERVER", &format!("web search: enabled (Brave{})", if web_search.1 { ", always" } else { "" }));
+    }
     log("SERVER", "monitoring all app↔server traffic");
 
     // Lazy gRPC client - connects on first request so server starts even if Feb17 isn't ready
@@ -390,8 +414,9 @@ async fn run(
         let queue = proactive_queue.clone();
         let style = style_file.clone();
         let params = params_file.clone();
+        let web = web_search.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(incoming, client_opt, addr, log, queue, style, params).await {
+            if let Err(e) = handle_connection(incoming, client_opt, addr, log, queue, style, params, web).await {
                 log_err("CONN", &format!("error: {e}"));
             }
         });
@@ -425,6 +450,7 @@ async fn handle_connection(
     proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
     style_file: Arc<String>,
     params_file: Arc<String>,
+    web_search: Arc<(bool, bool, String)>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let connection = incoming.await?;
     let remote = connection.remote_address();
@@ -444,9 +470,10 @@ async fn handle_connection(
         let queue = proactive_queue.clone();
         let style = style_file.clone();
         let params = params_file.clone();
+        let web = web_search.clone();
         let remote_addr = remote;
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(&mut send, &mut recv, client_opt, addr, &log, queue, style, params, remote_addr).await {
+            if let Err(e) = handle_stream(&mut send, &mut recv, client_opt, addr, &log, queue, style, params, web, remote_addr).await {
                 log_err("STREAM", &format!("error: {e}"));
             }
         });
@@ -464,6 +491,7 @@ async fn handle_stream(
     proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
     style_file: Arc<String>,
     params_file: Arc<String>,
+    web_search: Arc<(bool, bool, String)>,
     remote: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let prompt_bytes = recv.read_to_end(64 * 1024).await?;
@@ -505,6 +533,7 @@ async fn handle_stream(
             "type": "stream_end",
             "interaction_id": 0u64
         }))).await?;
+        send.flush().await?;
         send.finish()?;
         log("SEND", &format!("style ({} chars)", css.len()));
         return Ok(());
@@ -527,11 +556,23 @@ async fn handle_stream(
             drop(q);
             stream_queued_proactive(send, &msg, interaction_id, conn_log, &remote).await
         } else {
-            let llm_prompt = format_prompt(&prompt, true);
+            let llm_prompt = format_prompt(&prompt, true, "");
             stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file).await
         }
     } else {
-        let llm_prompt = format_prompt(&prompt, false);
+        let web_ctx = if web_search.0 && (web_search.1 || should_search_web(&prompt)) {
+            log("BRAVE", &format!("query=\"{}\" → searching", prompt));
+            brave_search(&web_search.2, &prompt, 10).await
+        } else if web_search.0 {
+            log("BRAVE", &format!("query=\"{}\" → skip (no trigger, use --web-search-always for all)", prompt));
+            String::new()
+        } else {
+            String::new()
+        };
+        if !web_ctx.is_empty() {
+            log("BRAVE", &format!("injected {} chars of web context", web_ctx.len()));
+        }
+        let llm_prompt = format_prompt(&prompt, false, &web_ctx);
         stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file).await
     };
 
@@ -556,15 +597,140 @@ checking in with you. Generate a warm, brief greeting (2-4 sentences). Mention a
 their attention today: duties, potential issues, or opportunities. Be conversational and supportive. \
 If you don't have specific information, offer a general supportive check-in.";
 
-fn format_prompt(user_msg: &str, is_check_in: bool) -> String {
+fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str) -> String {
     let (system, user_part) = if is_check_in {
         (CHECK_IN_PROMPT, "The user is checking in.")
     } else {
         (SYSTEM_PROMPT, user_msg)
     };
+    let system_with_web = if web_context.is_empty() {
+        system.to_string()
+    } else {
+        format!("{system}{web_context}")
+    };
     format!(
-        "<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user_part}<|im_end|>\n<|im_start|>assistant\n"
+        "<|im_start|>system\n{system_with_web}<|im_end|>\n<|im_start|>user\n{user_part}<|im_end|>\n<|im_start|>assistant\n"
     )
+}
+
+/// Brave Search API response (partial).
+#[derive(serde::Deserialize)]
+struct BraveResponse {
+    web: Option<BraveWeb>,
+}
+
+#[derive(serde::Deserialize)]
+struct BraveWeb {
+    results: Option<Vec<BraveResult>>,
+}
+
+#[derive(serde::Deserialize)]
+struct BraveResult {
+    title: Option<String>,
+    url: Option<String>,
+    description: Option<String>,
+}
+
+/// Brave Search: returns web context string for prompt injection.
+async fn brave_search(api_key: &str, query: &str, count: u32) -> String {
+    if api_key.is_empty() {
+        log_err("BRAVE", "API key empty, skipping");
+        return String::new();
+    }
+    let count = count.min(20);
+    let url = match reqwest::Url::parse_with_params(
+        "https://api.search.brave.com/res/v1/web/search",
+        &[("q", query), ("count", &count.to_string())],
+    ) {
+        Ok(u) => u,
+        Err(e) => {
+            log_err("BRAVE", &format!("invalid URL: {e}"));
+            return String::new();
+        }
+    };
+    log("BRAVE", &format!("GET {} query=\"{}\"", url, query));
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            log_err("BRAVE", &format!("client build failed: {e}"));
+            return String::new();
+        }
+    };
+    let resp = match client
+        .get(url.as_str())
+        .header("X-Subscription-Token", api_key)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            log_err("BRAVE", &format!("request failed: {e}"));
+            return String::new();
+        }
+    };
+    let status = resp.status();
+    if !status.is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        log_err("BRAVE", &format!("status {} body={}", status, body_text));
+        return String::new();
+    }
+    log("BRAVE", &format!("response status {}", status));
+    let data: BraveResponse = match resp.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            log_err("BRAVE", &format!("parse failed: {e}"));
+            return String::new();
+        }
+    };
+    let Some(web) = data.web else {
+        log("BRAVE", "no web results in response");
+        return String::new();
+    };
+    let Some(results) = web.results else {
+        log("BRAVE", "no results in response");
+        return String::new();
+    };
+    log("BRAVE", &format!("got {} results", results.len()));
+    for (i, r) in results.iter().enumerate() {
+        let title = r.title.as_deref().unwrap_or("(no title)");
+        let url = r.url.as_deref().unwrap_or("");
+        log("BRAVE", &format!("  [{}] {} {}", i + 1, title, url));
+    }
+    let mut ctx = String::from("\n\n[Current web context (use to answer questions about recent events, weather, news, etc.):\n");
+    for (i, r) in results.iter().enumerate().take(count as usize) {
+        let desc = r.description.as_deref().unwrap_or("").trim();
+        if !desc.is_empty() {
+            let title = r.title.as_deref().unwrap_or("(no title)");
+            let url = r.url.as_deref().unwrap_or("");
+            let snippet = desc.chars().take(400).collect::<String>();
+            ctx.push_str(&format!("{}. {} ({})\n   {}\n\n", i + 1, title, url, snippet));
+        }
+    }
+    ctx.push_str("]\n\n");
+    ctx
+}
+
+/// Heuristic: does the prompt likely need real-time web info?
+fn should_search_web(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+    let triggers = [
+        // Time-sensitive
+        "weather", "news", "latest", "today", "current", "now", "recent", "right now",
+        "what is happening", "what's happening", "what happened", "breaking", "headlines",
+        // Finance & markets
+        "price", "stock", "bitcoin", "crypto", "ethereum", "market", "dollar", "euro",
+        // Sports & events
+        "score", "game", "match", "election", "today's", "championship", "world cup",
+        // Factual / lookup
+        "who is", "who's", "who won", "when did", "where is", "how much", "what is the",
+        "definition of", "meaning of", "capital of", "population of", "time in", "date",
+        // Year/recency hints
+        "2024", "2025", "this year", "this month", "this week",
+    ];
+    triggers.iter().any(|t| lower.contains(t))
 }
 
 /// Map gRPC/connection errors to a user-friendly message for the Android app.
@@ -603,6 +769,7 @@ async fn send_stream_error(send: &mut quinn::SendStream, interaction_id: u64, er
         "interaction_id": interaction_id
     }));
     send.write_all(&frame).await?;
+    send.flush().await?;
     send.finish()?;
     Ok(())
 }
@@ -630,6 +797,7 @@ async fn stream_queued_proactive(
         "type": "stream_end",
         "interaction_id": interaction_id
     }))).await?;
+    send.flush().await?;
     send.finish()?;
     log("SEND", &format!("proactive (queued, {} chars)", msg.len()));
     log_connection(conn_log, remote, "RESPONSE", &format!("response_len={} (queued)", msg.len()));
@@ -680,6 +848,7 @@ async fn stream_inference(
         "interaction_id": interaction_id
     }));
     send.write_all(&frame).await?;
+    send.flush().await?;
     send.finish()?;
 
     log("SEND", &format!("response stream ({} chars)", total_len));
@@ -688,6 +857,19 @@ async fn stream_inference(
 }
 
 type InferenceStream = std::pin::Pin<Box<dyn Stream<Item = Result<CompleteStreamReply, tonic::Status>> + Send>>;
+
+/// Convert a full response into a token stream for real-time UX when the backend
+/// doesn't support streaming. Chunks by words so the client receives progressive updates.
+fn full_response_to_stream(response: String) -> InferenceStream {
+    let tokens: Vec<CompleteStreamReply> = response
+        .split_whitespace()
+        .map(|s| CompleteStreamReply {
+            token: format!("{s} "),
+        })
+        .collect();
+    let stream = tokio_stream::iter(tokens.into_iter().map(|r| Ok::<_, tonic::Status>(r)));
+    Box::pin(stream)
+}
 
 async fn call_inference_stream(
     client_opt: &Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
@@ -761,16 +943,13 @@ async fn run_complete_stream_tcp(
     match client.complete_stream(req).await {
         Ok(resp) => Ok(Box::pin(resp.into_inner())),
         Err(e) if e.code() == Code::Unimplemented => {
-            log("GRPC", "complete_stream UNIMPLEMENTED, falling back to complete");
+            log("GRPC", "complete_stream UNIMPLEMENTED, falling back to complete (chunked streaming)");
             let reply = client
                 .complete(Request::new(complete_req))
                 .await
                 .map_err(|e| format!("inference complete failed: {e}"))?
                 .into_inner();
-            let stream = tokio_stream::once(Ok(CompleteStreamReply {
-                token: reply.response,
-            }));
-            Ok(Box::pin(stream))
+            Ok(full_response_to_stream(reply.response))
         }
         Err(e) => Err(format!("inference stream failed: {e}").into()),
     }
@@ -784,16 +963,13 @@ async fn run_complete_stream_quic(
     match client.complete_stream(req).await {
         Ok(resp) => Ok(Box::pin(resp.into_inner())),
         Err(e) if e.code() == Code::Unimplemented => {
-            log("GRPC", "complete_stream UNIMPLEMENTED, falling back to complete");
+            log("GRPC", "complete_stream UNIMPLEMENTED, falling back to complete (chunked streaming)");
             let reply = client
                 .complete(Request::new(complete_req))
                 .await
                 .map_err(|e| format!("inference complete failed: {e}"))?
                 .into_inner();
-            let stream = tokio_stream::once(Ok(CompleteStreamReply {
-                token: reply.response,
-            }));
-            Ok(Box::pin(stream))
+            Ok(full_response_to_stream(reply.response))
         }
         Err(e) => Err(format!("inference stream failed: {e}").into()),
     }

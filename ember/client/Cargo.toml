@@ -1,6 +1,6 @@
 [package]
 name = "ember-client"
-version = "0.1.0"
+version = "0.1.16"
 edition = "2021"
 description = "Rudimentary Quinn QUIC client (run on Android or desktop)"
 

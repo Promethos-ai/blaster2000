@@ -200,7 +200,7 @@ where
     send.write_all(prompt.as_bytes()).await?;
     send.finish()?;
 
-    let result = parse_stream_response::<64>(&mut recv, TIMEOUT, on_token).await?;
+    let result = parse_stream_response::<4096>(&mut recv, TIMEOUT, on_token).await?;
 
     connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;

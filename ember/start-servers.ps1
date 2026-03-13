@@ -22,7 +22,7 @@ Start-Sleep -Seconds 2
 
 # Start ember-server (TCP to Feb17 - reliable, no QUIC handshake issues)
 Write-Host "Starting ember-server on UDP 4433..." -ForegroundColor Cyan
-$emberCmd = if (Test-Path "$emberDir\target\release\ember-server.exe") { "& .\target\release\ember-server.exe --inference http://127.0.0.1:50051" } else { "cargo run -p ember-server -- --inference http://127.0.0.1:50051" }
+$emberCmd = if (Test-Path "$emberDir\target\release\ember-server.exe") { "& .\target\release\ember-server.exe --inference http://127.0.0.1:50051 --web-search" } else { "cargo run -p ember-server -- --inference http://127.0.0.1:50051 --web-search" }
 Start-Process powershell -ArgumentList @(
     "-NoExit",
     "-Command",

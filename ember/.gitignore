@@ -1,4 +1,6 @@
 /target/
+.env
+.cursor/mcp.json
 ember-connections.log
 pinggy-win-x64.exe
 pinggy.exe
@@ -9,3 +11,4 @@ ember.keystore
 android/keystore.properties
 android/.gradle/
 android/app/build/
+client/android/
