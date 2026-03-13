@@ -32,12 +32,20 @@ object ChatWebView {
     }
 
     fun updateLastAiMessage(webView: WebView, text: String) {
-        val content = contentToHtml(text)
-        val escaped = escapeJs(content)
-        webView.evaluateJavascript(
-            "var el = document.getElementById('streaming-msg'); if (el) el.innerHTML = $escaped;",
-            null
-        )
+        try {
+            val content = contentToHtml(text)
+            val escaped = escapeJs(content)
+            webView.evaluateJavascript(
+                "try { var el = document.getElementById('streaming-msg'); if (el) el.innerHTML = $escaped; } catch(e) {}",
+                null
+            )
+        } catch (_: Throwable) {
+            val escaped = escapeJs(escapeHtml(text))
+            webView.evaluateJavascript(
+                "try { var el = document.getElementById('streaming-msg'); if (el) el.textContent = $escaped; } catch(e) {}",
+                null
+            )
+        }
     }
 
     private fun buildHtml(messages: List<ChatMessage>, css: String): String {
@@ -59,11 +67,16 @@ object ChatWebView {
 
     /** Renders AI content: HTML dashboard if it looks like one, else escaped text. */
     private fun contentToHtml(text: String): String {
-        val trimmed = text.trimStart()
-        if (trimmed.startsWith("<div") || trimmed.startsWith("<section") || trimmed.startsWith("<article")) {
-            return sanitizeHtml(text)
+        return try {
+            val trimmed = text.trimStart()
+            if (trimmed.startsWith("<div") || trimmed.startsWith("<section") || trimmed.startsWith("<article")) {
+                sanitizeHtml(text)
+            } else {
+                escapeHtml(text)
+            }
+        } catch (_: Throwable) {
+            escapeHtml(text)
         }
-        return escapeHtml(text)
     }
 
     /** Allow safe HTML tags; strip script, event handlers, etc. */
@@ -85,6 +98,8 @@ object ChatWebView {
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029")
         return "\"$escaped\""
     }
 }

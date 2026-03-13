@@ -277,22 +277,26 @@ class MainActivity : AppCompatActivity() {
                         if (isFirstToken) {
                             hasShownFirstToken = true
                             runOnUiThread {
-                                val last = chatMessages.lastIndex
-                                if (last >= 0 && !chatMessages[last].isUser) {
-                                    chatMessages[last] = ChatMessage(textToShow, isUser = false)
-                                    ChatWebView.updateLastAiMessage(chatWebView, textToShow)
-                                    scrollToBottom()
+                                if (!isDestroyed) {
+                                    val last = chatMessages.lastIndex
+                                    if (last >= 0 && !chatMessages[last].isUser) {
+                                        chatMessages[last] = ChatMessage(textToShow, isUser = false)
+                                        ChatWebView.updateLastAiMessage(chatWebView, textToShow)
+                                        scrollToBottom()
+                                    }
                                 }
                             }
                         } else {
                             pendingStreamUpdate?.let { streamUpdateHandler.removeCallbacks(it) }
                             pendingStreamUpdate = Runnable {
                                 runOnUiThread {
-                                    val last = chatMessages.lastIndex
-                                    if (last >= 0 && !chatMessages[last].isUser) {
-                                        chatMessages[last] = ChatMessage(textToShow, isUser = false)
-                                        ChatWebView.updateLastAiMessage(chatWebView, textToShow)
-                                        scrollToBottom()
+                                    if (!isDestroyed) {
+                                        val last = chatMessages.lastIndex
+                                        if (last >= 0 && !chatMessages[last].isUser) {
+                                            chatMessages[last] = ChatMessage(textToShow, isUser = false)
+                                            ChatWebView.updateLastAiMessage(chatWebView, textToShow)
+                                            scrollToBottom()
+                                        }
                                     }
                                 }
                                 pendingStreamUpdate = null
@@ -305,21 +309,23 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             runOnUiThread {
-                pendingStreamUpdate?.let { streamUpdateHandler.removeCallbacks(it) }
-                pendingStreamUpdate = null
-                val last = chatMessages.lastIndex
-                if (last >= 0 && !chatMessages[last].isUser) {
-                    val displayResult = if (result.startsWith("Error: ")) result.removePrefix("Error: ") else result
-                    chatMessages[last] = ChatMessage(displayResult, isUser = false)
+                if (!isDestroyed) {
+                    pendingStreamUpdate?.let { streamUpdateHandler.removeCallbacks(it) }
+                    pendingStreamUpdate = null
+                    val last = chatMessages.lastIndex
+                    if (last >= 0 && !chatMessages[last].isUser) {
+                        val displayResult = if (result.startsWith("Error: ")) result.removePrefix("Error: ") else result
+                        chatMessages[last] = ChatMessage(displayResult, isUser = false)
+                    }
+                    renderChat()
+                    askBtn.isEnabled = true
+                    checkInBtn.isEnabled = true
+                    scrollToBottom()
+                    if (result.startsWith("Error:") && (result.contains("warming up") || result.contains("still loading"))) {
+                        Toast.makeText(this@MainActivity, getString(R.string.error_model_loading), Toast.LENGTH_LONG).show()
+                    }
+                    if (!result.startsWith("Error:")) speakIfEnabled(result)
                 }
-                renderChat()
-                askBtn.isEnabled = true
-                checkInBtn.isEnabled = true
-                scrollToBottom()
-                if (result.startsWith("Error:") && (result.contains("warming up") || result.contains("still loading"))) {
-                    Toast.makeText(this@MainActivity, getString(R.string.error_model_loading), Toast.LENGTH_LONG).show()
-                }
-                if (!result.startsWith("Error:")) speakIfEnabled(result)
             }
         }
     }
