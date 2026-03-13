@@ -37,14 +37,14 @@
             android:textSize="13sp" />
     </LinearLayout>
 
-    <!-- Chat messages (user right, AI left) -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/chat_recycler"
+    <!-- Chat messages (WebView with server CSS, full width, copy/paste) -->
+    <WebView
+        android:id="@+id/chat_webview"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:clipToPadding="false"
-        android:paddingBottom="8dp" />
+        android:background="@color/background_dark"
+        android:scrollbars="vertical" />
 
     <!-- Input area -->
     <LinearLayout
@@ -85,6 +85,73 @@
                 android:src="@drawable/ic_mic"
                 android:tint="@color/accent_blue"
                 android:background="?attr/selectableItemBackgroundBorderless" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <Switch
+                    android:id="@+id/speak_switch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/speak_responses"
+                    android:textColor="@color/text_primary" />
+                <Button
+                    android:id="@+id/check_in_btn"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:text="@string/check_in"
+                    android:textAllCaps="false"
+                    android:background="@drawable/btn_primary" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="4dp">
+                <Button
+                    android:id="@+id/location_btn"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:text="@string/attach_location"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:background="@drawable/btn_primary" />
+                <Button
+                    android:id="@+id/camera_btn"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:text="@string/attach_camera"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:background="@drawable/btn_primary" />
+                <Button
+                    android:id="@+id/save_btn"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:text="@string/save_chat"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:background="@drawable/btn_primary" />
+            </LinearLayout>
         </LinearLayout>
 
         <Button

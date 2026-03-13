@@ -1,0 +1,10 @@
+{
+  "n_predict": 256,
+  "temp": 0.9,
+  "top_k": 40,
+  "top_p": 0.9,
+  "penalty_last_n": 64,
+  "penalty_repeat": 1.1,
+  "mirostat_tau": 5.0,
+  "mirostat_eta": 0.1
+}

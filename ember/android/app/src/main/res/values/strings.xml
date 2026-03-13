@@ -9,9 +9,20 @@
     <string name="ask_ai">Ask AI</string>
     <string name="response_label">Response</string>
     <string name="asking">Asking…</string>
-    <string name="error_server">Enter server address</string>
-    <string name="error_prompt">Enter a question</string>
-    <string name="error_voice">Voice not available</string>
+    <string name="error_server">What\'s your server address? (e.g. 192.168.1.100:4433)</string>
+    <string name="error_prompt">What would you like to ask?</string>
+    <string name="error_voice">Voice input isn\'t available right now — try typing instead.</string>
+    <string name="error_model_loading">The AI is still warming up. Give it a minute or two and try again.</string>
+    <string name="error_save_failed">Couldn\'t save the chat — try again in a moment.</string>
+    <string name="error_generic">Something went wrong. Try again in a moment.</string>
     <string name="listening">Listening…</string>
     <string name="splash_desc">Promethos</string>
+    <string name="speak_responses">Speak responses</string>
+    <string name="check_in">Check in</string>
+    <string name="attach_location">Add location</string>
+    <string name="attach_camera">Take photo</string>
+    <string name="save_chat">Save chat</string>
+    <string name="saved_to">Saved to %s</string>
+    <string name="location_unavailable">I couldn\'t get your location — try again in a moment.</string>
+    <string name="camera_unavailable">The camera isn\'t available right now.</string>
 </resources>

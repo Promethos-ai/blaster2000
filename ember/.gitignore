@@ -1,6 +1,7 @@
 /target/
 ember-connections.log
 pinggy-win-x64.exe
+pinggy.exe
 pinggy-*.txt
 ios/Ember/lib/
 ember.keystore

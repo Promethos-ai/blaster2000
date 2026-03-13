@@ -1,6 +1,6 @@
 # Ember — Full Architecture & Functionality
 
-A detailed explanation of the Ember project: a QUIC-based mobile AI chat client that connects to a local inference server via an optional reverse proxy (e.g. eagleoneonline.ca).
+A detailed explanation of the Ember project: a QUIC-based mobile AI chat client that connects to a local inference server via an optional reverse proxy (e.g. pinggy.io).
 
 ---
 
@@ -21,7 +21,7 @@ Ember lets you run an AI assistant on your home PC and access it from your smart
 ## 3. Network Architecture
 
 **Scenario A (Local):** Phone on same WiFi → PC (ember-server :4433, Feb17 :50051)  
-**Scenario B (Remote):** Phone → eagleoneonline.ca:4433 (reverse proxy) → PC
+**Scenario B (Remote):** Phone → pinggy (e.g. xxx.a.pinggy.link:port) → PC
 
 ![Network Topology](images/ember-network-topology.png)
 
@@ -105,8 +105,9 @@ ember/
 │       └── res/values/
 │           ├── server_defaults.xml   # Default server URL
 │           └── strings.xml
-├── build-android.ps1          # cargo ndk + gradle assembleRelease
-├── release-android.ps1        # gh release create + APK upload
+├── inference_params.json     # Tune temp, top_p, mirostat, etc. (read per request)
+├── build-android.ps1         # cargo ndk + gradle assembleRelease
+├── release-android.ps1       # gh release create + APK upload
 └── docs/
     ├── ARCHITECTURE.md        # This file
     └── DEVELOPMENT.md
@@ -119,7 +120,7 @@ ember/
 | Protocol | Port | Direction | Purpose |
 |----------|------|-----------|---------|
 | QUIC (UDP) | 4433 | Phone → ember-server | User prompts, streaming responses |
-| gRPC (TCP) | 50051 | ember-server → Feb17 | LLM inference |
+| gRPC (QUIC) | 50051 | ember-server → Feb17 | LLM inference |
 
 ---
 
@@ -128,18 +129,21 @@ ember/
 | Item | Location | Default |
 |------|----------|---------|
 | ember-server listen | `server/src/main.rs` | `0.0.0.0:4433` |
-| Feb17 gRPC | `--inference` | `http://127.0.0.1:50051` |
-| Android default server | `server_defaults.xml` | `eagleoneonline.ca:4433` |
+| Feb17 gRPC | `--inference` | `https://127.0.0.1:50051` (QUIC) or `http://` (TCP) |
+| Inference parameters | `inference_params.json` or `--params-file` | See [README](../README.md#fine-tuning-inference-parameters) |
+| Android default server | `server_defaults.xml` | `xxx.a.pinggy.link:port` |
 | Connection log | `--log-file` | `ember-connections.log` |
+
+**Inference params:** The server reads `inference_params.json` on every request. Edit between messages to tune `temp`, `top_p`, `mirostat_tau`, etc. without restarting.
 
 ---
 
 ## 10. Startup Order
 
-1. **Feb17 grpc_server** (TCP 50051).
+1. **Feb17 grpc_server** (QUIC 50051 with `--quic`, or TCP without).
 2. **ember-server** (UDP 4433).
-3. **eagleoneonline.ca** reverse proxy (optional, for remote access).
-4. **Android app**: Connect using `eagleoneonline.ca:4433` or local IP.
+3. **Pinggy** tunnel (optional, for remote access): `pinggy.bat` exposes local 4433.
+4. **Android app**: Connect using the URL from pinggy (e.g. `xxx.a.pinggy.link:port`) or local IP.
 
 ---
 
@@ -159,7 +163,7 @@ flowchart TB
     end
     
     subgraph Proxy ["☁️ Optional"]
-        Eagle[eagleoneonline.ca]
+        Pinggy[xxx.a.pinggy.link]
     end
     
     App -->|QUIC| Eagle

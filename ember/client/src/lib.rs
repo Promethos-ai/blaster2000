@@ -89,11 +89,26 @@ fn configure_client(provider: Arc<CryptoProvider>) -> Result<ClientConfig, Box<d
 }
 
 /// Ask the AI a question via the ember server (which forwards to Feb17 inference).
-pub fn ask_ai(server_addr: impl ToSocketAddrs, prompt: &str) -> Result<String, String> {
-    let addrs: Vec<SocketAddr> = server_addr.to_socket_addrs().map_err(|e| {
+/// Uses hostname for TLS SNI when addr_str is "host:port" (e.g. pinggy URLs).
+pub fn ask_ai(addr_str: &str, prompt: &str) -> Result<String, String> {
+    ask_ai_streaming(addr_str, prompt, |_| {})
+}
+
+/// Ask the AI (with pre-resolved address; uses IP for SNI).
+pub fn ask_ai_addr(server_addr: SocketAddr, prompt: &str) -> Result<String, String> {
+    ask_ai_addr_streaming(server_addr, prompt, |_| {})
+}
+
+/// Ask the AI with a callback for each token (for progressive UI display).
+/// Uses hostname from addr_str for TLS SNI (required for pinggy/proxy connections).
+pub fn ask_ai_streaming<F>(addr_str: &str, prompt: &str, on_token: F) -> Result<String, String>
+where
+    F: FnMut(&str) + Send,
+{
+    let addrs: Vec<SocketAddr> = addr_str.to_socket_addrs().map_err(|e| {
         let msg = e.to_string();
         if msg.contains("lookup") || msg.contains("hostname") || msg.contains("no address") {
-            format!("Could not resolve hostname. Check: (1) proxy reachable (e.g. eagleoneonline.ca), (2) device has internet, (3) hostname is correct.")
+            "Could not resolve hostname. Check: (1) proxy reachable (e.g. pinggy), (2) device has internet, (3) hostname is correct.".to_string()
         } else {
             msg
         }
@@ -104,16 +119,31 @@ pub fn ask_ai(server_addr: impl ToSocketAddrs, prompt: &str) -> Result<String, S
         .copied()
         .or_else(|| addrs.into_iter().next())
         .ok_or_else(|| "Could not resolve address".to_string())?;
-    ask_ai_addr(server_addr, prompt)
+    let server_name = extract_host(addr_str);
+    ask_ai_addr_streaming_with_sni(server_addr, server_name, prompt, on_token)
 }
 
-/// Ask the AI (with pre-resolved address).
-pub fn ask_ai_addr(server_addr: SocketAddr, prompt: &str) -> Result<String, String> {
-    ask_ai_addr_streaming(server_addr, prompt, |_| {})
+/// Extract host part from "host:port" for TLS SNI.
+fn extract_host(addr_str: &str) -> String {
+    addr_str.rsplit_once(':')
+        .map(|(host, _)| host.to_string())
+        .unwrap_or_else(|| addr_str.to_string())
 }
 
-/// Ask the AI with a callback for each token (for progressive UI display).
+/// Ask the AI with pre-resolved address (uses IP for SNI; for direct IP connections).
 pub fn ask_ai_addr_streaming<F>(server_addr: SocketAddr, prompt: &str, on_token: F) -> Result<String, String>
+where
+    F: FnMut(&str) + Send,
+{
+    ask_ai_addr_streaming_with_sni(server_addr, server_addr.ip().to_string(), prompt, on_token)
+}
+
+fn ask_ai_addr_streaming_with_sni<F>(
+    server_addr: SocketAddr,
+    server_name: String,
+    prompt: &str,
+    on_token: F,
+) -> Result<String, String>
 where
     F: FnMut(&str) + Send,
 {
@@ -124,11 +154,12 @@ where
         .build()
         .map_err(|e| e.to_string())?;
 
-    rt.block_on(async_run_streaming(server_addr, prompt, provider, on_token)).map_err(|e| e.to_string())
+    rt.block_on(async_run_streaming(server_addr, &server_name, prompt, provider, on_token)).map_err(|e| e.to_string())
 }
 
 async fn async_run_streaming<F>(
     server_addr: SocketAddr,
+    server_name: &str,
     prompt: &str,
     provider: Arc<CryptoProvider>,
     on_token: F,
@@ -141,18 +172,27 @@ where
     endpoint.set_default_client_config(client_config);
 
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-    let server_name = server_addr.ip().to_string();
     let connection = match tokio::time::timeout(
         TIMEOUT,
-        endpoint.connect(server_addr, &server_name)?,
+        endpoint.connect(server_addr, server_name)?,
     )
     .await
     {
         Ok(Ok(conn)) => conn,
-        Ok(Err(e)) => return Err(format!("connection failed: {e}").into()),
+        Ok(Err(e)) => {
+            let msg = format!("{e}");
+            let friendly = if msg.to_lowercase().contains("connection refused")
+                || msg.to_lowercase().contains("unreachable")
+            {
+                "Couldn't reach the server. Check the address and that you're on the same network."
+            } else {
+                "Couldn't connect. Check the server address and try again."
+            };
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, friendly).into());
+        }
         Err(_) => return Err(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
-            "connection timeout (check server address and network)",
+            "The server took too long to respond. Check the address and try again.",
         ).into()),
     };
 
@@ -188,7 +228,7 @@ async fn parse_stream_response<const BUF: usize>(
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
-                "response timeout",
+                "The response took too long. Try again in a moment.",
             ).into()),
         };
         if n == 0 {
@@ -227,7 +267,7 @@ async fn parse_stream_response<const BUF: usize>(
                         return Ok(result);
                     }
                     "stream_error" => {
-                        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("unknown error");
+                        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("Something went wrong. Try again.");
                         return Err(format!("Error: {}", err).into());
                     }
                     "stream_start" => {}
@@ -242,7 +282,7 @@ async fn parse_stream_response<const BUF: usize>(
                 on_token("\n");
                 break;
             } else {
-                return Err(format!("invalid JSON: expected value at line 1 column 1").into());
+                return Err("Something went wrong with the response. Try again.".into());
             }
         }
     }

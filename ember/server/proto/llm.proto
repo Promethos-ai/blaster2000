@@ -52,4 +52,6 @@ message InferenceParameters {
   optional float top_p = 8;
   optional int32 penalty_last_n = 13;
   optional float penalty_repeat = 14;
+  optional float mirostat_tau = 15;  // target cross-entropy; > 0 enables mirostat
+  optional float mirostat_eta = 16;  // learning rate for mirostat (default 0.1)
 }

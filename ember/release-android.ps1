@@ -4,7 +4,7 @@
 # Usage: .\release-android.ps1 [-Version "v0.1.0"] [-ApkPath "path\to\app.apk"]
 
 param(
-    [string]$Version = "ember-v0.1.0",
+    [string]$Version = "ember-v0.1.15",
     [string]$ApkPath = ""
 )
 

@@ -18,8 +18,8 @@ You should see the client send a message and receive it echoed back.
 
 ## Architecture
 
-- **`ember-server`**: Quinn QUIC echo server. Listens on `0.0.0.0:4433` (all interfaces). Uses a self-signed certificate.
-- **`ember-client`**: Quinn QUIC client. Connects to the server, sends a message, prints the echo. Skips certificate verification (development only).
+- **`ember-server`**: Quinn QUIC bridge. Listens on `0.0.0.0:4433` (all interfaces). Forwards prompts to Feb17 grpc_server for LLM inference. Uses a self-signed certificate.
+- **`ember-client`**: Quinn QUIC client. Connects to the server, sends prompts, streams AI responses. Skips certificate verification (development only).
 
 ## Android App
 
@@ -62,6 +62,34 @@ Or manually:
 ### Run the server
 
 On your home PC, forward UDP port **4433** and run `cargo run -p ember-server`. Enter your PC's IP (e.g. `192.168.1.100:4433`) in the app.
+
+### Fine-tuning inference parameters
+
+The server reads inference parameters from a JSON file on **every request**, so you can adjust them between messages without restarting. Edit `inference_params.json` in the ember directory (or use `--params-file PATH`):
+
+```json
+{
+  "n_predict": 256,
+  "temp": 0.9,
+  "top_p": 0.9,
+  "penalty_repeat": 1.1,
+  "mirostat_tau": 5.0,
+  "mirostat_eta": 0.1
+}
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `n_predict` | 256 | Max tokens to generate |
+| `temp` | 0.9 | Temperature (0.8–1.0 for creativity) |
+| `top_k` | 40 | Top-K sampling |
+| `top_p` | 0.9 | Nucleus sampling (avoids low-probability oddities) |
+| `penalty_last_n` | 64 | Context size for repetition penalty |
+| `penalty_repeat` | 1.1 | Repetition penalty (prevents loops) |
+| `mirostat_tau` | 5.0 | Mirostat target entropy (> 0 enables mirostat) |
+| `mirostat_eta` | 0.1 | Mirostat learning rate |
+
+Only include fields you want to change; missing fields keep their defaults. Use a custom path with `--params-file my_config.json`.
 
 ---
 
@@ -107,7 +135,7 @@ On your home router, forward UDP port **4433** to your PC’s local IP.
 
 Use your public IP or a dynamic DNS hostname (e.g. DuckDNS, No-IP).
 
-For a **Pinggy-like tunnel** via eagleoneonline.ca, see [docs/PGROK-EAGLEONE-README.md](docs/PGROK-EAGLEONE-README.md). For UDP/QUIC (ember), see [docs/PORT-FORWARDING-AND-TUNNEL-SETUP.md](docs/PORT-FORWARDING-AND-TUNNEL-SETUP.md).
+For **remote access**, use **Pinggy**: run `pinggy.bat` to expose local 4433; the Android app connects to the URL shown (e.g. `xxx.a.pinggy.link:port`). Alternative: [docs/PORT-FORWARDING-AND-TUNNEL-SETUP.md](docs/PORT-FORWARDING-AND-TUNNEL-SETUP.md).
 
 ### 3. Cross-compile for Android
 
@@ -155,7 +183,9 @@ The client disables certificate verification for development. For production, us
 
 ## Development
 
-For engineering notes (removing file locks, build commands, troubleshooting), see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+For engineering notes (build commands, troubleshooting), see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+**Before recompiling and relaunching:** Always kill existing processes (grpc_server, ember-server, pinggy, cargo, rustc) and remove file locks (`.cargo-lock` in target dirs). See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#before-recompiling-and-relaunching).
 
 ## Dependencies
 

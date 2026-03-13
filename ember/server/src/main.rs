@@ -1,8 +1,10 @@
 //! QUIC bridge to Feb17 inference.
-//! Receives questions from smartphone via QUIC, forwards to Feb17 gRPC, returns AI answers.
+//! Receives questions from smartphone via QUIC, forwards to Feb17 gRPC over QUIC, returns AI answers.
 //!
-//! Usage: cargo run -p ember-server [-- [--inference http://127.0.0.1:50051] [--log-file PATH] [--no-log-file]]
-//! Requires: Feb17 grpc_server running (cargo run --bin grpc_server -p Feb17)
+//! Usage: cargo run -p ember-server [-- [--inference ADDR] [--params-file PATH] [--style-file PATH] [--log-file PATH]]
+//!   --params-file: JSON file with n_predict, temp, top_p, penalty_repeat, mirostat_tau, etc.
+//!   Edit between requests to fine-tune output; server reads it on every inference.
+//!   Default: inference_params.json
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -10,20 +12,156 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use chrono::Utc;
-use quinn::{Endpoint, Incoming, ServerConfig};
+use quinn::{ClientConfig, Endpoint, Incoming, ServerConfig};
 use rcgen::{generate_simple_self_signed, CertifiedKey};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
+use rustls::DigitallySignedStruct;
+use rustls::crypto::CryptoProvider;
+use rustls::{ClientConfig as RustlsClientConfig, SignatureScheme};
 use serde_json::json;
-use tokio_stream::StreamExt;
+use tokio_stream::{StreamExt, Stream};
 use tonic::transport::Channel;
-use tonic::Request;
+use tonic::{Code, Request};
 
 mod de_kherud_grpc_llm {
     tonic::include_proto!("de.kherud.grpc.llm");
 }
 
 use de_kherud_grpc_llm::llm_client::LlmClient;
-use de_kherud_grpc_llm::{ChatPrompt, CompleteRequest, InferenceParameters, Prompt};
+use de_kherud_grpc_llm::{ChatPrompt, CompleteRequest, CompleteStreamReply, GetStatusRequest, InferenceParameters, Prompt};
+
+/// Inference params from JSON file. All fields optional; missing = use default.
+#[derive(serde::Deserialize, Default)]
+struct InferenceParamsFile {
+    n_predict: Option<i32>,
+    temp: Option<f32>,
+    top_k: Option<i32>,
+    top_p: Option<f32>,
+    penalty_last_n: Option<i32>,
+    penalty_repeat: Option<f32>,
+    mirostat_tau: Option<f32>,
+    mirostat_eta: Option<f32>,
+}
+
+fn default_params() -> InferenceParameters {
+    InferenceParameters {
+        n_predict: Some(256),
+        temp: Some(0.9),
+        top_k: Some(40),
+        top_p: Some(0.9),
+        penalty_last_n: Some(64),
+        penalty_repeat: Some(1.1),
+        mirostat_tau: Some(5.0),
+        mirostat_eta: Some(0.1),
+        ..Default::default()
+    }
+}
+
+fn load_inference_params(path: &str) -> InferenceParameters {
+    let default = default_params();
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return default;
+    };
+    let Ok(file) = serde_json::from_str::<InferenceParamsFile>(&content) else {
+        return default;
+    };
+    InferenceParameters {
+        n_predict: file.n_predict.or(default.n_predict),
+        temp: file.temp.or(default.temp),
+        top_k: file.top_k.or(default.top_k),
+        top_p: file.top_p.or(default.top_p),
+        penalty_last_n: file.penalty_last_n.or(default.penalty_last_n),
+        penalty_repeat: file.penalty_repeat.or(default.penalty_repeat),
+        mirostat_tau: file.mirostat_tau.or(default.mirostat_tau),
+        mirostat_eta: file.mirostat_eta.or(default.mirostat_eta),
+        ..Default::default()
+    }
+}
+
+/// Skip certificate verification for QUIC (development only - do not use in production!)
+#[derive(Debug)]
+struct SkipServerVerification(Arc<CryptoProvider>);
+
+impl SkipServerVerification {
+    fn new() -> Arc<Self> {
+        Arc::new(Self(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        )))
+    }
+}
+
+impl ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+fn configure_quic_client() -> Result<ClientConfig, Box<dyn std::error::Error + Send + Sync>> {
+    let crypto = RustlsClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|e| format!("{:?}", e))?
+    .dangerous()
+    .with_custom_certificate_verifier(SkipServerVerification::new())
+    .with_no_client_auth();
+
+    let client_config = ClientConfig::new(Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
+    ));
+    Ok(client_config)
+}
+
+/// gRPC client over QUIC (https) or TCP (http).
+enum GrpcClient {
+    Tcp(LlmClient<Channel>),
+    Quic {
+        _endpoint: quinn::Endpoint,
+        client: LlmClient<tonic_h3::H3Channel<tonic_h3::quinn::H3QuinnConnector>>,
+    },
+}
 
 fn log(prefix: &str, msg: &str) {
     let ts = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
@@ -52,8 +190,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .install_default()
         .expect("failed to install rustls crypto provider");
 
-    let mut inference_addr = "http://127.0.0.1:50051".to_string();
+    let mut inference_addr = "https://127.0.0.1:50051".to_string();
     let mut log_file: Option<String> = Some("ember-connections.log".to_string());
+    let mut style_file = "server/chat-style.css".to_string();
+    let mut params_file = "inference_params.json".to_string();
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -70,6 +210,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if args[i] == "--no-log-file" {
             log_file = None;
             i += 1;
+            continue;
+        }
+        if args[i] == "--style-file" && i + 1 < args.len() {
+            style_file = args[i + 1].clone();
+            i += 2;
+            continue;
+        }
+        if args[i] == "--params-file" && i + 1 < args.len() {
+            params_file = args[i + 1].clone();
+            i += 2;
             continue;
         }
         i += 1;
@@ -92,7 +242,120 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let listen_addr: SocketAddr = "0.0.0.0:4433".parse()?;
-    run(listen_addr, inference_addr, conn_log)
+    let proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let style_file = Arc::new(style_file);
+    let params_file = Arc::new(params_file);
+    run(listen_addr, inference_addr, conn_log, proactive_queue.clone(), style_file, params_file)
+}
+
+/// Background task: every 30 min, generate a proactive check-in and push to queue.
+fn spawn_proactive_task(
+    grpc_client: Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
+    inference_addr: Arc<String>,
+    queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    params_file: Arc<String>,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
+        interval.tick().await; // skip first immediate tick
+        loop {
+            interval.tick().await;
+            let llm_prompt = format_prompt("", true);
+            match call_inference_stream(&grpc_client, inference_addr.as_str(), &llm_prompt, params_file.as_str()).await {
+                Ok(mut stream) => {
+                    let mut text = String::new();
+                    while let Some(Ok(reply)) = stream.next().await {
+                        text.push_str(&reply.token);
+                    }
+                    if !text.trim().is_empty() {
+                        let mut q = queue.lock().await;
+                        q.push(text.trim().to_string());
+                        if q.len() > 5 {
+                            q.remove(0);
+                        }
+                        log("PROACTIVE", "queued check-in message");
+                    }
+                }
+                Err(e) => log_err("PROACTIVE", &format!("{e}")),
+            }
+        }
+    });
+}
+
+/// Background task: poll grpc_server until ready, then push "Ready for inference!" to queue.
+fn spawn_readiness_task(
+    grpc_client: Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
+    inference_addr: Arc<String>,
+    queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static READY_SENT: AtomicBool = AtomicBool::new(false);
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
+        interval.tick().await; // skip first immediate tick
+        loop {
+            interval.tick().await;
+            if READY_SENT.load(Ordering::Relaxed) {
+                continue;
+            }
+            if let Ok(()) = check_grpc_ready(&grpc_client, inference_addr.as_str()).await {
+                READY_SENT.store(true, Ordering::Relaxed);
+                let mut q = queue.lock().await;
+                q.insert(0, "Ready for inference!".to_string());
+                if q.len() > 5 {
+                    q.pop();
+                }
+                log("READY", "inference backend ready; queued 'Ready for inference!' for app");
+                break;
+            }
+        }
+    });
+}
+
+/// Check if grpc_server is ready (model loaded). Creates client if needed.
+async fn check_grpc_ready(
+    client_opt: &Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
+    inference_addr: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut guard = client_opt.lock().await;
+    if guard.is_none() {
+        let client = if inference_addr.starts_with("https://") {
+            let uri: http::Uri = inference_addr
+                .parse()
+                .map_err(|e| format!("invalid inference URI: {e}"))?;
+            let server_name = uri.host().unwrap_or("localhost").to_string();
+            let client_config = configure_quic_client()?;
+            let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)
+                .map_err(|e| format!("QUIC client endpoint: {e}"))?;
+            endpoint.set_default_client_config(client_config);
+            let connector = tonic_h3::quinn::H3QuinnConnector::new(uri.clone(), server_name, endpoint.clone());
+            let channel: tonic_h3::H3Channel<tonic_h3::quinn::H3QuinnConnector> =
+                h3_util::client::H3Connection::new(connector, uri);
+            GrpcClient::Quic {
+                _endpoint: endpoint,
+                client: LlmClient::new(channel),
+            }
+        } else {
+            let channel = Channel::from_shared(inference_addr.to_string())?
+                .connect()
+                .await
+                .map_err(|e| format!("gRPC connect failed: {e}"))?;
+            GrpcClient::Tcp(LlmClient::new(channel))
+        };
+        *guard = Some(client);
+    }
+
+    let req = Request::new(GetStatusRequest {});
+    match guard.as_mut().unwrap() {
+        GrpcClient::Tcp(client) => {
+            let _ = client.status(req).await.map_err(|e| format!("{e}"))?;
+        }
+        GrpcClient::Quic { client, .. } => {
+            let _ = client.status(req).await.map_err(|e| format!("{e}"))?;
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -100,25 +363,35 @@ async fn run(
     listen_addr: SocketAddr,
     inference_addr: String,
     conn_log: Option<Arc<std::sync::Mutex<std::fs::File>>>,
+    proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    style_file: Arc<String>,
+    params_file: Arc<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server_config = configure_server()?;
     let endpoint = Endpoint::server(server_config, listen_addr)?;
 
     log("SERVER", &format!("listening on {}", endpoint.local_addr()?));
-    log("SERVER", &format!("inference: {} (connects on first request)", inference_addr));
+    log("SERVER", &format!("inference: {} (QUIC if https://, TCP if http://)", inference_addr));
+    log("SERVER", &format!("params file: {} (edit between requests to tune output)", params_file.as_str()));
     log("SERVER", "monitoring all app↔server traffic");
 
     // Lazy gRPC client - connects on first request so server starts even if Feb17 isn't ready
-    let grpc_client: Arc<tokio::sync::Mutex<Option<LlmClient<Channel>>>> =
+    let grpc_client: Arc<tokio::sync::Mutex<Option<GrpcClient>>> =
         Arc::new(tokio::sync::Mutex::new(None));
     let inference_addr = Arc::new(inference_addr);
+
+    spawn_proactive_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone(), params_file.clone());
+    spawn_readiness_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone());
 
     while let Some(incoming) = endpoint.accept().await {
         let client_opt = grpc_client.clone();
         let addr = inference_addr.clone();
         let log = conn_log.clone();
+        let queue = proactive_queue.clone();
+        let style = style_file.clone();
+        let params = params_file.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(incoming, client_opt, addr, log).await {
+            if let Err(e) = handle_connection(incoming, client_opt, addr, log, queue, style, params).await {
                 log_err("CONN", &format!("error: {e}"));
             }
         });
@@ -146,9 +419,12 @@ fn configure_server() -> Result<ServerConfig, Box<dyn std::error::Error + Send +
 
 async fn handle_connection(
     incoming: Incoming,
-    grpc_client: Arc<tokio::sync::Mutex<Option<LlmClient<Channel>>>>,
+    grpc_client: Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
     inference_addr: Arc<String>,
     conn_log: Option<Arc<std::sync::Mutex<std::fs::File>>>,
+    proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    style_file: Arc<String>,
+    params_file: Arc<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let connection = incoming.await?;
     let remote = connection.remote_address();
@@ -165,9 +441,12 @@ async fn handle_connection(
         let client_opt = grpc_client.clone();
         let addr = inference_addr.clone();
         let log = conn_log.clone();
+        let queue = proactive_queue.clone();
+        let style = style_file.clone();
+        let params = params_file.clone();
         let remote_addr = remote;
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(&mut send, &mut recv, client_opt, addr, &log, remote_addr).await {
+            if let Err(e) = handle_stream(&mut send, &mut recv, client_opt, addr, &log, queue, style, params, remote_addr).await {
                 log_err("STREAM", &format!("error: {e}"));
             }
         });
@@ -179,9 +458,12 @@ async fn handle_connection(
 async fn handle_stream(
     send: &mut quinn::SendStream,
     recv: &mut quinn::RecvStream,
-    grpc_client: Arc<tokio::sync::Mutex<Option<LlmClient<Channel>>>>,
+    grpc_client: Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
     inference_addr: Arc<String>,
     conn_log: &Option<Arc<std::sync::Mutex<std::fs::File>>>,
+    proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    style_file: Arc<String>,
+    params_file: Arc<String>,
     remote: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let prompt_bytes = recv.read_to_end(64 * 1024).await?;
@@ -200,9 +482,37 @@ async fn handle_stream(
     log_connection(conn_log, &remote, "REQUEST", &format!("prompt_len={} prompt={}", prompt.len(), prompt_preview_escaped));
 
     if prompt.is_empty() {
-        send_stream_error(send, 0, "empty prompt").await?;
+        send_stream_error(send, 0, "What would you like to ask? Type something above and try again.").await?;
         log_connection(conn_log, &remote, "ERROR", "empty prompt");
         return Ok(());
+    }
+
+    let is_style_request = prompt.eq_ignore_ascii_case("__get_style__");
+    if is_style_request {
+        log("RECV", "style request");
+        let css = std::fs::read_to_string(style_file.as_str())
+            .unwrap_or_else(|_| include_str!("../chat-style.css").to_string());
+        send.write_all(&stream_frame(json!({
+            "type": "stream_start",
+            "interaction_id": 0u64
+        }))).await?;
+        send.write_all(&stream_frame(json!({
+            "type": "stream_token",
+            "token": css,
+            "interaction_id": 0u64
+        }))).await?;
+        send.write_all(&stream_frame(json!({
+            "type": "stream_end",
+            "interaction_id": 0u64
+        }))).await?;
+        send.finish()?;
+        log("SEND", &format!("style ({} chars)", css.len()));
+        return Ok(());
+    }
+
+    let is_check_in = prompt.eq_ignore_ascii_case("__check_in__");
+    if is_check_in {
+        log("RECV", "proactive check-in requested");
     }
 
     let interaction_id = {
@@ -211,12 +521,73 @@ async fn handle_stream(
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     };
 
-    if let Err(e) = stream_inference(send, &grpc_client, &inference_addr, &prompt, interaction_id, conn_log, &remote).await {
-        log_err("SEND", &format!("{e}"));
-        log_connection(conn_log, &remote, "ERROR", &e.to_string().replace('\t', " ").replace('\n', " "));
-        send_stream_error(send, interaction_id, &e.to_string()).await?;
+    let result = if is_check_in {
+        let mut q = proactive_queue.lock().await;
+        if let Some(msg) = q.pop() {
+            drop(q);
+            stream_queued_proactive(send, &msg, interaction_id, conn_log, &remote).await
+        } else {
+            let llm_prompt = format_prompt(&prompt, true);
+            stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file).await
+        }
+    } else {
+        let llm_prompt = format_prompt(&prompt, false);
+        stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file).await
+    };
+
+    if let Err(e) = result {
+        let err_str = e.to_string();
+        log_err("SEND", &err_str);
+        log_connection(conn_log, &remote, "ERROR", &err_str.replace('\t', " ").replace('\n', " "));
+        let user_msg = user_friendly_error(&err_str);
+        send_stream_error(send, interaction_id, &user_msg).await?;
     }
     Ok(())
+}
+
+/// System prompt for a caring, thoughtful assistant (ChatML format for DeepSeek/Llama).
+const SYSTEM_PROMPT: &str = "You are a caring, thoughtful assistant. You check in on the user's wellbeing, \
+remember context, and help with duties, issues, and opportunities. When the user shares something, \
+respond warmly and helpfully. Be concise but kind.";
+
+/// Proactive check-in prompt when user taps "Check in" (no prior user message).
+const CHECK_IN_PROMPT: &str = "You are a caring, thoughtful assistant. The user has opened the app and is \
+checking in with you. Generate a warm, brief greeting (2-4 sentences). Mention any things that might need \
+their attention today: duties, potential issues, or opportunities. Be conversational and supportive. \
+If you don't have specific information, offer a general supportive check-in.";
+
+fn format_prompt(user_msg: &str, is_check_in: bool) -> String {
+    let (system, user_part) = if is_check_in {
+        (CHECK_IN_PROMPT, "The user is checking in.")
+    } else {
+        (SYSTEM_PROMPT, user_msg)
+    };
+    format!(
+        "<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user_part}<|im_end|>\n<|im_start|>assistant\n"
+    )
+}
+
+/// Map gRPC/connection errors to a user-friendly message for the Android app.
+fn user_friendly_error(err: &str) -> String {
+    let lower = err.to_lowercase();
+    if lower.contains("transport error")
+        || lower.contains("connection refused")
+        || lower.contains("connection reset")
+        || lower.contains("connect failed")
+        || lower.contains("unreachable")
+    {
+        "The AI is still warming up. Give it a minute or two and try again.".to_string()
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        "That took a bit too long. Try again in a moment.".to_string()
+    } else if lower.contains("model is still loading") || lower.contains("not ready") {
+        "The AI is still warming up. Give it a minute or two and try again.".to_string()
+    } else if lower.contains("not found") || lower.contains("404") {
+        "Something went wrong on the server. Try again later.".to_string()
+    } else if lower.contains("unavailable") {
+        "The AI isn't available right now. Try again in a moment.".to_string()
+    } else {
+        "Something went wrong. Try again in a moment.".to_string()
+    }
 }
 
 fn stream_frame(obj: serde_json::Value) -> Vec<u8> {
@@ -236,14 +607,44 @@ async fn send_stream_error(send: &mut quinn::SendStream, interaction_id: u64, er
     Ok(())
 }
 
+/// Send a queued proactive message as a stream (no LLM call).
+async fn stream_queued_proactive(
+    send: &mut quinn::SendStream,
+    msg: &str,
+    interaction_id: u64,
+    conn_log: &Option<Arc<std::sync::Mutex<std::fs::File>>>,
+    remote: &SocketAddr,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    send.write_all(&stream_frame(json!({
+        "type": "stream_start",
+        "interaction_id": interaction_id
+    }))).await?;
+    if !msg.is_empty() {
+        send.write_all(&stream_frame(json!({
+            "type": "stream_token",
+            "token": msg,
+            "interaction_id": interaction_id
+        }))).await?;
+    }
+    send.write_all(&stream_frame(json!({
+        "type": "stream_end",
+        "interaction_id": interaction_id
+    }))).await?;
+    send.finish()?;
+    log("SEND", &format!("proactive (queued, {} chars)", msg.len()));
+    log_connection(conn_log, remote, "RESPONSE", &format!("response_len={} (queued)", msg.len()));
+    Ok(())
+}
+
 async fn stream_inference(
     send: &mut quinn::SendStream,
-    grpc_client: &Arc<tokio::sync::Mutex<Option<LlmClient<Channel>>>>,
+    grpc_client: &Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
     inference_addr: &Arc<String>,
     prompt: &str,
     interaction_id: u64,
     conn_log: &Option<Arc<std::sync::Mutex<std::fs::File>>>,
     remote: &SocketAddr,
+    params_file: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // stream_start
     let frame = stream_frame(json!({
@@ -253,7 +654,7 @@ async fn stream_inference(
     send.write_all(&frame).await?;
 
     let mut total_len = 0usize;
-    let mut stream = call_inference_stream(grpc_client, inference_addr, prompt).await?;
+    let mut stream = call_inference_stream(grpc_client, inference_addr, prompt, params_file).await?;
 
     while let Some(result) = stream.next().await {
         match result {
@@ -286,43 +687,114 @@ async fn stream_inference(
     Ok(())
 }
 
+type InferenceStream = std::pin::Pin<Box<dyn Stream<Item = Result<CompleteStreamReply, tonic::Status>> + Send>>;
+
 async fn call_inference_stream(
-    client_opt: &Arc<tokio::sync::Mutex<Option<LlmClient<Channel>>>>,
+    client_opt: &Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
     inference_addr: &str,
     prompt: &str,
-) -> Result<tonic::Streaming<de_kherud_grpc_llm::CompleteStreamReply>, Box<dyn std::error::Error + Send + Sync>> {
+    params_file: &str,
+) -> Result<InferenceStream, Box<dyn std::error::Error + Send + Sync>> {
+    let use_quic = inference_addr.starts_with("https://");
+
     let mut guard = client_opt.lock().await;
     if guard.is_none() {
-        let channel = Channel::from_shared(inference_addr.to_string())?
-            .connect()
-            .await
-            .map_err(|e| format!("gRPC connect failed: {e}"))?;
-        *guard = Some(LlmClient::new(channel));
+        let client = if use_quic {
+            let uri: http::Uri = inference_addr
+                .parse()
+                .map_err(|e| format!("invalid inference URI: {e}"))?;
+            let server_name = uri
+                .host()
+                .unwrap_or("localhost")
+                .to_string();
+            let client_config = configure_quic_client()?;
+            let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)
+                .map_err(|e| format!("QUIC client endpoint: {e}"))?;
+            endpoint.set_default_client_config(client_config);
+            let connector = tonic_h3::quinn::H3QuinnConnector::new(
+                uri.clone(),
+                server_name,
+                endpoint.clone(),
+            );
+            let channel: tonic_h3::H3Channel<tonic_h3::quinn::H3QuinnConnector> =
+                h3_util::client::H3Connection::new(connector, uri);
+            let client = LlmClient::new(channel);
+            log("GRPC", "QUIC client ready");
+            GrpcClient::Quic {
+                _endpoint: endpoint,
+                client,
+            }
+        } else {
+            let channel = Channel::from_shared(inference_addr.to_string())?
+                .connect()
+                .await
+                .map_err(|e| format!("gRPC connect failed: {e}"))?;
+            log("GRPC", "TCP client ready");
+            GrpcClient::Tcp(LlmClient::new(channel))
+        };
+        *guard = Some(client);
     }
-    let client = guard.as_mut().unwrap();
 
+    let params = load_inference_params(params_file);
     let complete_req = CompleteRequest {
         prompt: Some(Prompt {
             prompt: Some(de_kherud_grpc_llm::prompt::Prompt::Chat(ChatPrompt {
                 prompt: prompt.to_string(),
             })),
         }),
-        parameters: Some(InferenceParameters {
-            n_predict: Some(256),
-            temp: Some(0.7),
-            top_k: Some(40),
-            top_p: Some(0.9),
-            penalty_last_n: Some(64),
-            penalty_repeat: Some(1.1),
-            ..Default::default()
-        }),
+        parameters: Some(params),
     };
 
-    let stream = client
-        .complete_stream(Request::new(complete_req))
-        .await
-        .map_err(|e| format!("inference stream failed: {e}"))?
-        .into_inner();
+    let req = Request::new(complete_req.clone());
 
-    Ok(stream)
+    match guard.as_mut().unwrap() {
+        GrpcClient::Tcp(client) => run_complete_stream_tcp(client, complete_req, req).await,
+        GrpcClient::Quic { client, .. } => run_complete_stream_quic(client, complete_req, req).await,
+    }
+}
+
+async fn run_complete_stream_tcp(
+    client: &mut LlmClient<Channel>,
+    complete_req: CompleteRequest,
+    req: Request<CompleteRequest>,
+) -> Result<InferenceStream, Box<dyn std::error::Error + Send + Sync>> {
+    match client.complete_stream(req).await {
+        Ok(resp) => Ok(Box::pin(resp.into_inner())),
+        Err(e) if e.code() == Code::Unimplemented => {
+            log("GRPC", "complete_stream UNIMPLEMENTED, falling back to complete");
+            let reply = client
+                .complete(Request::new(complete_req))
+                .await
+                .map_err(|e| format!("inference complete failed: {e}"))?
+                .into_inner();
+            let stream = tokio_stream::once(Ok(CompleteStreamReply {
+                token: reply.response,
+            }));
+            Ok(Box::pin(stream))
+        }
+        Err(e) => Err(format!("inference stream failed: {e}").into()),
+    }
+}
+
+async fn run_complete_stream_quic(
+    client: &mut LlmClient<tonic_h3::H3Channel<tonic_h3::quinn::H3QuinnConnector>>,
+    complete_req: CompleteRequest,
+    req: Request<CompleteRequest>,
+) -> Result<InferenceStream, Box<dyn std::error::Error + Send + Sync>> {
+    match client.complete_stream(req).await {
+        Ok(resp) => Ok(Box::pin(resp.into_inner())),
+        Err(e) if e.code() == Code::Unimplemented => {
+            log("GRPC", "complete_stream UNIMPLEMENTED, falling back to complete");
+            let reply = client
+                .complete(Request::new(complete_req))
+                .await
+                .map_err(|e| format!("inference complete failed: {e}"))?
+                .into_inner();
+            let stream = tokio_stream::once(Ok(CompleteStreamReply {
+                token: reply.response,
+            }));
+            Ok(Box::pin(stream))
+        }
+        Err(e) => Err(format!("inference stream failed: {e}").into()),
+    }
 }

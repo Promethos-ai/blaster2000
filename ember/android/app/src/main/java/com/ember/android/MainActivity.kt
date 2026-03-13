@@ -1,35 +1,59 @@
 package com.ember.android
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
 import android.speech.RecognizerIntent
+import android.util.Log
+import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.Switch
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
+        private const val TAG = "MainActivity"
         private const val KEY_CHAT_TEXTS = "chat_texts"
         private const val KEY_CHAT_IS_USER = "chat_is_user"
+        private const val PREF_SPEAK_RESPONSES = "speak_responses"
+        private const val STREAM_UPDATE_DELAY_MS = 80L  // Batch tokens for smoother display
     }
 
     private lateinit var serverInput: EditText
     private lateinit var promptInput: EditText
     private lateinit var askBtn: Button
+    private lateinit var checkInBtn: Button
     private lateinit var micBtn: ImageButton
-    private lateinit var chatRecycler: RecyclerView
-    private lateinit var chatAdapter: ChatAdapter
+    private lateinit var speakSwitch: Switch
+    private lateinit var chatWebView: WebView
+    private lateinit var locationBtn: Button
+    private lateinit var cameraBtn: Button
+    private lateinit var saveBtn: Button
+
+    private val chatMessages = mutableListOf<ChatMessage>()
+    private var chatCss = ChatWebView.DEFAULT_CSS
+    private var hasFetchedStyle = false
+
+    private var tts: TextToSpeech? = null
+
+    private val streamUpdateHandler = Handler(Looper.getMainLooper())
+    private var pendingStreamUpdate: Runnable? = null
 
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -55,6 +79,32 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val multiPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { granted ->
+        if (granted.values.any { it }) {
+            onLocationRequested()
+        }
+    }
+
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) launchCamera()
+        else Toast.makeText(this, getString(R.string.camera_unavailable), Toast.LENGTH_SHORT).show()
+    }
+
+    private var pendingCameraUri: android.net.Uri? = null
+
+    private val cameraLauncher = registerForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            Toast.makeText(this, "Photo saved", Toast.LENGTH_SHORT).show()
+        }
+        pendingCameraUri = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -62,28 +112,40 @@ class MainActivity : AppCompatActivity() {
         serverInput = findViewById(R.id.server_address)
         promptInput = findViewById(R.id.prompt_input)
         askBtn = findViewById(R.id.ask_btn)
+        checkInBtn = findViewById(R.id.check_in_btn)
         micBtn = findViewById(R.id.mic_btn)
-        chatRecycler = findViewById(R.id.chat_recycler)
+        speakSwitch = findViewById(R.id.speak_switch)
+        chatWebView = findViewById(R.id.chat_webview)
+        locationBtn = findViewById(R.id.location_btn)
+        cameraBtn = findViewById(R.id.camera_btn)
+        saveBtn = findViewById(R.id.save_btn)
 
         serverInput.setText(getString(R.string.default_server_address), android.widget.TextView.BufferType.EDITABLE)
         promptInput.hint = getString(R.string.prompt_hint)
 
-        chatAdapter = ChatAdapter()
+        speakSwitch.isChecked = getSharedPreferences("ember", MODE_PRIVATE).getBoolean(PREF_SPEAK_RESPONSES, true)
+        speakSwitch.setOnCheckedChangeListener { _, checked ->
+            getSharedPreferences("ember", MODE_PRIVATE).edit().putBoolean(PREF_SPEAK_RESPONSES, checked).apply()
+        }
+
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.getDefault()
+            } else {
+                Log.e(TAG, "TTS init failed: $status")
+            }
+        }
+
+        ChatWebView.configure(chatWebView)
         savedInstanceState?.getStringArray(KEY_CHAT_TEXTS)?.let { texts ->
             savedInstanceState.getBooleanArray(KEY_CHAT_IS_USER)?.let { isUser ->
                 if (texts.size == isUser.size) {
-                    val restored = texts.indices.map { i ->
-                        ChatMessage(texts[i], isUser[i])
-                    }
-                    chatAdapter.restoreMessages(restored)
+                    chatMessages.clear()
+                    chatMessages.addAll(texts.indices.map { i -> ChatMessage(texts[i], isUser[i]) })
                 }
             }
         }
-        chatRecycler.layoutManager = LinearLayoutManager(this).apply {
-            reverseLayout = true
-            stackFromEnd = true
-        }
-        chatRecycler.adapter = chatAdapter
+        renderChat()
 
         micBtn.setOnClickListener {
             when {
@@ -99,16 +161,72 @@ class MainActivity : AppCompatActivity() {
             when {
                 addr.isEmpty() -> Toast.makeText(this, getString(R.string.error_server), Toast.LENGTH_SHORT).show()
                 prompt.isEmpty() -> Toast.makeText(this, getString(R.string.error_prompt), Toast.LENGTH_SHORT).show()
-                else -> askAi(addr, prompt)
+                else -> askAi(addr, prompt, prompt)
             }
         }
+
+        checkInBtn.setOnClickListener {
+            val addr = serverInput.text.toString().trim()
+            when {
+                addr.isEmpty() -> Toast.makeText(this, getString(R.string.error_server), Toast.LENGTH_SHORT).show()
+                else -> askAi(addr, "__check_in__", getString(R.string.check_in))
+            }
+        }
+
+        locationBtn.setOnClickListener {
+            when {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED -> onLocationRequested()
+                else -> multiPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            }
+        }
+
+        cameraBtn.setOnClickListener {
+            when {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED -> launchCamera()
+                else -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+        }
+
+        saveBtn.setOnClickListener { saveChatToDisk() }
+    }
+
+    private fun onLocationRequested() {
+        val loc = DeviceCapabilities.getLastLocation(this)
+        if (loc != null) {
+            val locText = DeviceCapabilities.formatLocationForPrompt(loc)
+            promptInput.setText("$locText\n\n${promptInput.text}")
+            promptInput.setSelection(0)
+        } else {
+            Toast.makeText(this, getString(R.string.location_unavailable), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun launchCamera() {
+        DeviceCapabilities.createTakePhotoIntent(this)?.let { (_, uri) ->
+            pendingCameraUri = uri
+            cameraLauncher.launch(uri)
+        } ?: Toast.makeText(this, getString(R.string.camera_unavailable), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveChatToDisk() {
+        DeviceCapabilities.saveChatToDisk(this, chatMessages).fold(
+            onSuccess = { path -> Toast.makeText(this, getString(R.string.saved_to, path), Toast.LENGTH_LONG).show() },
+            onFailure = { Toast.makeText(this, getString(R.string.error_save_failed), Toast.LENGTH_SHORT).show() }
+        )
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        val msgs = chatAdapter.getMessages()
-        outState.putStringArray(KEY_CHAT_TEXTS, msgs.map { it.text }.toTypedArray())
-        outState.putBooleanArray(KEY_CHAT_IS_USER, msgs.map { it.isUser }.toBooleanArray())
+        outState.putStringArray(KEY_CHAT_TEXTS, chatMessages.map { it.text }.toTypedArray())
+        outState.putBooleanArray(KEY_CHAT_IS_USER, chatMessages.map { it.isUser }.toBooleanArray())
+    }
+
+    private fun renderChat() {
+        ChatWebView.render(chatWebView, chatMessages, chatCss)
+    }
+
+    private fun scrollToBottom() {
+        chatWebView.evaluateJavascript("window.scrollTo(0, document.body.scrollHeight);", null)
     }
 
     private fun startVoiceInput() {
@@ -124,40 +242,102 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun scrollToBottom() {
-        chatRecycler.post {
-            if (chatAdapter.itemCount > 0) {
-                chatRecycler.smoothScrollToPosition(chatAdapter.itemCount - 1)
+    private fun askAi(addr: String, prompt: String, displayPrompt: String = prompt) {
+        if (prompt != "__check_in__") promptInput.setText("")
+        askBtn.isEnabled = false
+        checkInBtn.isEnabled = false
+
+        // Fetch style from server on first use (or use cached)
+        if (!hasFetchedStyle) {
+            hasFetchedStyle = true
+            lifecycleScope.launch {
+                chatCss = withContext(Dispatchers.IO) { EmberClient.fetchStyle(addr) }
+                runOnUiThread { doAskAi(addr, prompt, displayPrompt) }
             }
+        } else {
+            doAskAi(addr, prompt, displayPrompt)
         }
     }
 
-    private fun askAi(addr: String, prompt: String) {
-        promptInput.setText("")
-        askBtn.isEnabled = false
-
-        chatAdapter.addUserMessage(prompt)
-        chatAdapter.addAiMessage(getString(R.string.asking))
+    private fun doAskAi(addr: String, prompt: String, displayPrompt: String) {
+        chatMessages.add(ChatMessage(displayPrompt, isUser = true))
+        chatMessages.add(ChatMessage(getString(R.string.asking), isUser = false))
+        renderChat()
         scrollToBottom()
 
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
+                    var accumulatedText = ""
+                    var hasShownFirstToken = false
                     EmberClient.askStreaming(addr, prompt, TokenCallback { token ->
-                        runOnUiThread {
-                            chatAdapter.appendTokenToLastAi(token, getString(R.string.asking))
-                            scrollToBottom()
+                        accumulatedText += token
+                        val textToShow = accumulatedText
+                        val isFirstToken = !hasShownFirstToken && textToShow.isNotEmpty()
+                        if (isFirstToken) {
+                            hasShownFirstToken = true
+                            runOnUiThread {
+                                val last = chatMessages.lastIndex
+                                if (last >= 0 && !chatMessages[last].isUser) {
+                                    chatMessages[last] = ChatMessage(textToShow, isUser = false)
+                                    ChatWebView.updateLastAiMessage(chatWebView, textToShow)
+                                    scrollToBottom()
+                                }
+                            }
+                        } else {
+                            pendingStreamUpdate?.let { streamUpdateHandler.removeCallbacks(it) }
+                            pendingStreamUpdate = Runnable {
+                                runOnUiThread {
+                                    val last = chatMessages.lastIndex
+                                    if (last >= 0 && !chatMessages[last].isUser) {
+                                        chatMessages[last] = ChatMessage(textToShow, isUser = false)
+                                        ChatWebView.updateLastAiMessage(chatWebView, textToShow)
+                                        scrollToBottom()
+                                    }
+                                }
+                                pendingStreamUpdate = null
+                            }
+                            streamUpdateHandler.postDelayed(pendingStreamUpdate!!, STREAM_UPDATE_DELAY_MS)
                         }
                     })
                 } catch (e: Exception) {
-                    "Error: ${e.message}"
+                    e.message?.takeIf { it.isNotBlank() } ?: getString(R.string.error_generic)
                 }
             }
             runOnUiThread {
-                chatAdapter.updateLastAiMessage(result)
+                pendingStreamUpdate?.let { streamUpdateHandler.removeCallbacks(it) }
+                pendingStreamUpdate = null
+                val last = chatMessages.lastIndex
+                if (last >= 0 && !chatMessages[last].isUser) {
+                    val displayResult = if (result.startsWith("Error: ")) result.removePrefix("Error: ") else result
+                    chatMessages[last] = ChatMessage(displayResult, isUser = false)
+                }
+                renderChat()
                 askBtn.isEnabled = true
+                checkInBtn.isEnabled = true
                 scrollToBottom()
+                if (result.startsWith("Error:") && (result.contains("warming up") || result.contains("still loading"))) {
+                    Toast.makeText(this@MainActivity, getString(R.string.error_model_loading), Toast.LENGTH_LONG).show()
+                }
+                if (!result.startsWith("Error:")) speakIfEnabled(result)
             }
         }
+    }
+
+    private fun speakIfEnabled(text: String) {
+        if (speakSwitch.isChecked) speakText(text)
+    }
+
+    private fun speakText(text: String) {
+        val toSpeak = text.trim()
+        if (toSpeak.isNotEmpty()) {
+            tts?.speak(toSpeak, TextToSpeech.QUEUE_FLUSH, null, "ember_tts")
+        }
+    }
+
+    override fun onDestroy() {
+        tts?.stop()
+        tts?.shutdown()
+        super.onDestroy()
     }
 }

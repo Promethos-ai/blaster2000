@@ -12,7 +12,8 @@ data class ChatMessage(
 )
 
 class ChatAdapter(
-    private var messages: MutableList<ChatMessage> = mutableListOf()
+    private var messages: MutableList<ChatMessage> = mutableListOf(),
+    private val onSpeakAiMessage: ((String) -> Unit)? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -37,7 +38,14 @@ class ChatAdapter(
         val msg = messages[position]
         when (holder) {
             is UserViewHolder -> holder.textView.text = msg.text
-            is AiViewHolder -> holder.textView.text = msg.text
+            is AiViewHolder -> {
+                holder.textView.text = msg.text
+                holder.itemView.setOnClickListener {
+                    if (!msg.isUser && msg.text.isNotBlank()) {
+                        onSpeakAiMessage?.invoke(msg.text)
+                    }
+                }
+            }
         }
     }
 

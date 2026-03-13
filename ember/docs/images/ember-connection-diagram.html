@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ember Connection Architecture</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;600&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1.5rem;
+      color: #58a6ff;
+      font-weight: 600;
+    }
+    .diagram {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .node {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      min-width: 200px;
+      position: relative;
+    }
+    .node.android { border-left: 4px solid #3fb950; }
+    .node.pinggy { border-left: 4px solid #d29922; }
+    .node.ember { border-left: 4px solid #58a6ff; }
+    .node.grpc { border-left: 4px solid #a371f7; }
+    .node-title {
+      font-weight: 600;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      color: #c9d1d9;
+    }
+    .node-detail {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: #8b949e;
+      line-height: 1.6;
+    }
+    .arrow {
+      font-size: 1.5rem;
+      color: #484f58;
+      flex-shrink: 0;
+    }
+    .arrow-label {
+      font-size: 0.7rem;
+      color: #8b949e;
+      text-align: center;
+      margin-top: 0.25rem;
+    }
+    .conn-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .flow-note {
+      font-size: 0.8rem;
+      color: #6e7681;
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: #21262d;
+      border-radius: 8px;
+      max-width: 900px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ember — Connection Architecture</h1>
+  <div class="diagram">
+    <div class="row">
+      <div class="node android">
+        <div class="node-title">📱 Android App</div>
+        <div class="node-detail">
+          Ember client (QUIC)<br>
+          <strong>Connects to:</strong><br>
+          • Remote: xxx.a.pinggy.link:port<br>
+          • Local: 192.168.1.x:4433<br>
+          <strong>Protocol:</strong> QUIC/UDP<br>
+          <strong>Send:</strong> prompt (raw UTF-8)<br>
+          <strong>Receive:</strong> JSON stream
+        </div>
+      </div>
+      <div class="conn-block">
+        <span class="arrow">→</span>
+        <span class="arrow-label">QUIC/UDP</span>
+      </div>
+      <div class="node pinggy">
+        <div class="node-title">☁️ Pinggy</div>
+        <div class="node-detail">
+          Reverse proxy (optional)<br>
+          <strong>Exposes:</strong> xxx.a.pinggy.link:port<br>
+          <strong>Forwards:</strong> -R0:127.0.0.1:4433<br>
+          <strong>Protocol:</strong> UDP tunnel<br>
+          <strong>Runs:</strong> pinggy.exe on PC
+        </div>
+      </div>
+      <div class="conn-block">
+        <span class="arrow">→</span>
+        <span class="arrow-label">127.0.0.1:4433</span>
+      </div>
+      <div class="node ember">
+        <div class="node-title">🖥️ ember-server</div>
+        <div class="node-detail">
+          QUIC bridge<br>
+          <strong>Listen:</strong> 0.0.0.0:4433 (UDP)<br>
+          <strong>Connects to:</strong><br>
+          • https://127.0.0.1:50051 (QUIC)<br>
+          • http://127.0.0.1:50051 (TCP)<br>
+          <strong>RPC:</strong> complete_stream
+        </div>
+      </div>
+      <div class="conn-block">
+        <span class="arrow">→</span>
+        <span class="arrow-label">gRPC 127.0.0.1:50051</span>
+      </div>
+      <div class="node grpc">
+        <div class="node-title">⚙️ grpc_server (Feb17)</div>
+        <div class="node-detail">
+          LLM inference<br>
+          <strong>Listen:</strong> 127.0.0.1:50051<br>
+          <strong>Protocol:</strong> gRPC/QUIC (--quic)<br>
+          or gRPC/TCP<br>
+          <strong>Backend:</strong> llama.cpp
+        </div>
+      </div>
+    </div>
+    <div class="flow-note">
+      <strong>Flow:</strong> User types prompt → Android sends QUIC → (Pinggy tunnels) → ember-server → grpc_server complete_stream → tokens stream back as JSON (stream_start, stream_token, stream_end)
+    </div>
+  </div>
+</body>
+</html>

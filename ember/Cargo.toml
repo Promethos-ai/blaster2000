@@ -1,3 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["server", "client"]
+
+[patch.crates-io]
+# Fix "async fn resumed after completion" panic: clear make_send_request_fut on Err
+h3-util = { path = "vendor-tonic-h3/h3-util" }
