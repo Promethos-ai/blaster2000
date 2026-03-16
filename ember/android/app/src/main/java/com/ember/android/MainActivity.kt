@@ -20,6 +20,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,6 +30,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val DIAG = "EmberDiag"
         private const val KEY_CHAT_TEXTS = "chat_texts"
         private const val KEY_CHAT_IS_USER = "chat_is_user"
         private const val PREF_SPEAK_RESPONSES = "speak_responses"
@@ -106,9 +108,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        Log.i(DIAG, "MainActivity.onCreate START")
         super.onCreate(savedInstanceState)
+        Log.i(DIAG, "MainActivity - setContentView")
         setContentView(R.layout.activity_main)
 
+        Log.i(DIAG, "MainActivity - findViewById")
         serverInput = findViewById(R.id.server_address)
         promptInput = findViewById(R.id.prompt_input)
         askBtn = findViewById(R.id.ask_btn)
@@ -119,6 +124,7 @@ class MainActivity : AppCompatActivity() {
         locationBtn = findViewById(R.id.location_btn)
         cameraBtn = findViewById(R.id.camera_btn)
         saveBtn = findViewById(R.id.save_btn)
+        Log.i(DIAG, "MainActivity - all findViewById done")
 
         serverInput.setText(getString(R.string.default_server_address), android.widget.TextView.BufferType.EDITABLE)
         promptInput.hint = getString(R.string.prompt_hint)
@@ -127,7 +133,9 @@ class MainActivity : AppCompatActivity() {
         speakSwitch.setOnCheckedChangeListener { _, checked ->
             getSharedPreferences("ember", MODE_PRIVATE).edit().putBoolean(PREF_SPEAK_RESPONSES, checked).apply()
         }
+        Log.i(DIAG, "MainActivity - prefs/speakSwitch done")
 
+        Log.i(DIAG, "MainActivity - initializing TTS")
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.getDefault()
@@ -135,7 +143,9 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "TTS init failed: $status")
             }
         }
+        Log.i(DIAG, "MainActivity - TTS callback registered")
 
+        Log.i(DIAG, "MainActivity - ChatWebView.configure")
         ChatWebView.configure(chatWebView)
         savedInstanceState?.getStringArray(KEY_CHAT_TEXTS)?.let { texts ->
             savedInstanceState.getBooleanArray(KEY_CHAT_IS_USER)?.let { isUser ->
@@ -188,6 +198,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         saveBtn.setOnClickListener { saveChatToDisk() }
+        Log.i(DIAG, "MainActivity.onCreate DONE")
     }
 
     private fun onLocationRequested() {
@@ -266,11 +277,12 @@ class MainActivity : AppCompatActivity() {
         scrollToBottom()
 
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    var accumulatedText = ""
-                    var hasShownFirstToken = false
-                    EmberClient.askStreaming(addr, prompt, TokenCallback { token ->
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    try {
+                        var accumulatedText = ""
+                        var hasShownFirstToken = false
+                        EmberClient.askStreaming(addr, prompt, TokenCallback { token ->
                         accumulatedText += token
                         val textToShow = accumulatedText
                         val isFirstToken = !hasShownFirstToken && textToShow.isNotEmpty()
@@ -304,9 +316,14 @@ class MainActivity : AppCompatActivity() {
                             streamUpdateHandler.postDelayed(pendingStreamUpdate!!, STREAM_UPDATE_DELAY_MS)
                         }
                     })
-                } catch (e: Exception) {
-                    e.message?.takeIf { it.isNotBlank() } ?: getString(R.string.error_generic)
+                    } catch (e: Exception) {
+                        e.message?.takeIf { it.isNotBlank() } ?: getString(R.string.error_generic)
+                    }
                 }
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                Log.e(TAG, "askStreaming failed", t)
+                t.message?.takeIf { it.isNotBlank() } ?: getString(R.string.error_generic)
             }
             runOnUiThread {
                 if (!isDestroyed) {

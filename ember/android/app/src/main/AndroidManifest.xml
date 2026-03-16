@@ -17,6 +17,7 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
+        android:name=".EmberApplication"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:requestLegacyExternalStorage="true"
