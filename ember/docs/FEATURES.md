@@ -2,6 +2,14 @@
 
 Comprehensive documentation of Ember's features, including the Android Loader, control mechanisms, push channel, and more.
 
+## Changelog (v0.1.24)
+
+- **Long-poll push** — `__fetch_push__` now long-polls: server holds the connection until a push arrives (or 60s timeout). Screen clear and other pushes are delivered immediately instead of waiting up to 5 seconds.
+- **Rich media area** — Bordered with accent blue stroke; shows Promethos logo placeholder when empty (replaces chicken).
+- **Instructions file** — `--instructions-file` content is read on every request; edit `instructions.txt` and changes apply without restart.
+- **Marquee push** — `.\push-to-ember.ps1 "marquee"` fetches weather (Open-Meteo) and gas prices (NREL) for last shared location, pushes rich HTML, then refresh.
+- **start-servers.ps1** — Uses `--instructions-file instructions.txt` by default.
+
 ---
 
 ## 1. Ember Loader (Android app updater)
@@ -55,13 +63,13 @@ For the Loader to detect a new Ember APK:
 
 1. **Build** the main app: `.\build-android.ps1`
 2. **Sign** the APK: `.\sign-apk.ps1`
-3. **Create release** with an asset named `ember-{version}.apk` (e.g. `ember-0.1.22.apk`)
+3. **Create release** with an asset named `ember-{version}.apk` (e.g. `ember-0.1.24.apk`)
 
 ```powershell
 # Copy signed APK to expected name, then upload
-Copy-Item android\app\build\outputs\apk\release\app-release-signed.apk ember-0.1.22.apk
-gh release create v0.1.22 ember-0.1.22.apk --repo Promethos-ai/blaster2000 --title "Ember v0.1.22"
-# Or: gh release upload v0.1.22 ember-0.1.22.apk --repo Promethos-ai/blaster2000
+Copy-Item android\app\build\outputs\apk\release\app-release.apk ember-0.1.24.apk
+gh release create v0.1.24 ember-0.1.24.apk --repo Promethos-ai/blaster2000 --title "Ember v0.1.24"
+# Or: gh release upload v0.1.24 ember-0.1.24.apk --repo Promethos-ai/blaster2000
 ```
 
 ### Loader configuration
@@ -83,7 +91,7 @@ Any `__word__` pattern is a control message. The server handles them in-process;
 | Message | Action |
 |---------|--------|
 | `__get_style__` | Return CSS from server |
-| `__fetch_push__` | Pop from proactive_queue, return payload |
+| `__fetch_push__` | Long-poll: pop from proactive_queue, return payload (blocks until push or 60s) |
 | `__check_in__` | Proactive check-in (synthetic prompt or queued msg) |
 | `__app_clear__` | App reset (see below) |
 | `__whatever__` | Any other `__word__` → return empty |
@@ -105,7 +113,7 @@ When the app receives `"app clear"` or `"__app_clear__"` (from push channel or A
 
 **User intent:** When the user says "reset my screen", "clear the app", "screen to default", etc., the server routes to the control pipeline (no LLM). It sends `stream_control_payload` so the app executes immediately.
 
-**AI output:** The AI can output `__app_clear__` or `<ember_push>app clear</ember_push>`; the server strips it; the app receives it on its next poll. If the AI says "app clear" as text, the server has a failsafe and the app also detects it locally.
+**AI output:** The AI can output `__app_clear__` or `<ember_push>app clear</ember_push>`; the server strips it; the app receives it immediately via long-poll. If the AI says "app clear" as text, the server has a failsafe and the app also detects it locally.
 
 ---
 
@@ -121,6 +129,9 @@ The server exposes a TCP push channel (default port **4434**) so external proces
 
 # App reset
 .\push-to-ember.ps1 "app clear"
+
+# Marquee: weather + gas prices for last shared location (Open-Meteo + NREL)
+.\push-to-ember.ps1 "marquee"
 
 # Refresh DOM (re-render chat + rich WebViews; fixes layout glitches)
 .\push-to-ember.ps1 "refresh"
@@ -155,9 +166,9 @@ If the TCP push channel is unavailable, the script writes to `push-queue.txt`. T
 |---------|-------------|
 | **Streaming chat** | Token-by-token AI responses |
 | **Check-in** | Proactive greeting when user taps "Check in" |
-| **Control supervisor** | Polls `__fetch_push__` every 5s when in foreground; commits payloads to DOM and refreshes |
+| **Control supervisor** | Long-polls `__fetch_push__` when in foreground; pushes delivered immediately |
 | **TTS** | Optional text-to-speech for AI responses |
-| **Rich content** | WebView for HTML (weather, cards, etc.) |
+| **Rich content** | WebView for HTML (weather, cards, etc.); bordered area with Promethos logo when empty |
 | **Voice input** | Microphone for speech-to-text |
 | **Location** | Share location for context; server fetches local environment (address, nearby parks/water/shops) from coordinates via OSM. Location is remembered for follow-up questions until app clear. |
 | **Error area** | Fixed area for errors (no scroll) |
@@ -173,7 +184,7 @@ If the TCP push channel is unavailable, the script writes to `push-queue.txt`. T
 | **Push channel** | TCP 4434 for external push |
 | **File push** | Polls `push-queue.txt` every 1s |
 | **Inference params** | Reads `inference_params.json` on every request |
-| **Instructions file** | `--instructions-file` for dynamic behavior |
+| **Instructions file** | `--instructions-file` for dynamic behavior (read on every request, no restart) |
 | **Web search** | Brave Search via `--web-search` |
 | **Connection log** | `ember-connections.log` |
 
@@ -204,6 +215,7 @@ The AI can use these tags in its output (server strips them):
 | `release-android.ps1` | Create GitHub release, upload APK |
 | `push-to-ember.ps1` | Push message to app via server |
 | `push-loader.ps1` | Build loader, push to repo, upload to release |
+| `start-servers.ps1` | Start grpc_server, then ember-server (with instructions file) |
 
 ---
 

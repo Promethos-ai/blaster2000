@@ -27,8 +27,8 @@ object RichContentWebView {
 
     /** Update content with HTML. Safe to call from any thread; run on UI for visibility. */
     fun updateContent(webView: WebView, container: View?, html: String) {
-        val wrapped = wrapHtml(html)
         webView.post {
+            val wrapped = wrapHtml(html, webView.context)
             webView.loadDataWithBaseURL(null, wrapped, "text/html", "UTF-8", null)
             container?.visibility = View.VISIBLE
         }
@@ -55,11 +55,11 @@ object RichContentWebView {
         webView.post { webView.reload() }
     }
 
-    /** Clear content and hide the container. */
+    /** Clear content and show Promethos logo placeholder. */
     fun clear(webView: WebView, container: View?) {
         webView.post {
-            webView.loadDataWithBaseURL(null, wrapHtml(""), "text/html", "UTF-8", null)
-            container?.visibility = View.GONE
+            webView.loadDataWithBaseURL(null, wrapHtml("", webView.context), "text/html", "UTF-8", null)
+            container?.visibility = View.VISIBLE
         }
     }
 
@@ -82,9 +82,16 @@ object RichContentWebView {
         }
     }
 
-    private fun wrapHtml(bodyContent: String): String {
+    private fun logoPlaceholder(context: android.content.Context): String {
+        val base = "android.resource://${context.packageName}/drawable/splash_promethous"
+        return """<div class="rich-card" style="text-align:center;padding:16px;"><img src="$base" style="max-width:24px;max-height:24px;opacity:0.7;" /></div>"""
+    }
+
+    private fun wrapHtml(bodyContent: String, context: android.content.Context? = null): String {
         if (bodyContent.isBlank()) {
-            return """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>$BASE_CSS</style></head><body></body></html>"""
+            val placeholder = context?.let { logoPlaceholder(it) }
+                ?: """<div class="rich-card" style="text-align:center;padding:16px;opacity:0.6;"></div>"""
+            return """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>$BASE_CSS</style></head><body>$placeholder</body></html>"""
         }
         val sanitized = bodyContent
             .replace(Regex("<script[^>]*>", RegexOption.IGNORE_CASE), "<!--")

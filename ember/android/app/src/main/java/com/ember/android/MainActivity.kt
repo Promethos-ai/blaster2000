@@ -6,6 +6,7 @@ import android.location.Location
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import androidx.appcompat.app.AlertDialog
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -13,13 +14,13 @@ import android.speech.RecognizerIntent
 import android.util.Log
 import android.view.View
 import android.webkit.WebView
-import android.widget.Button
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.ImageButton
-import android.widget.ScrollView
-import android.widget.Switch
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.PopupMenu
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -45,23 +46,22 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_CHAT_TEXTS = "chat_texts"
         private const val KEY_CHAT_IS_USER = "chat_is_user"
         private const val PREF_SPEAK_RESPONSES = "speak_responses"
+        private const val PREF_CUSTOM_SERVER = "custom_server"
+        private const val PREF_SERVER_INDEX = "server_index"
         private const val STREAM_UPDATE_DELAY_MS = 80L  // Batch tokens for smoother display
-        private const val CONTROL_POLL_INTERVAL_MS = 5_000L  // Supervisory: poll control stream when in foreground
+        private const val CONTROL_POLL_INITIAL_DELAY_MS = 1_000L  // Brief delay before first long-poll
     }
 
-    private lateinit var serverInput: EditText
+    private lateinit var appTitle: TextView
+    private lateinit var serverSpinner: Spinner
     private lateinit var promptInput: EditText
-    private lateinit var askBtn: Button
-    private lateinit var checkInBtn: Button
+    private lateinit var askBtn: ImageButton
+    private lateinit var speakBtn: ImageButton
     private lateinit var micBtn: ImageButton
-    private lateinit var speakSwitch: Switch
+    private lateinit var menuBtn: ImageButton
     private lateinit var chatWebView: WebView
     private lateinit var richContentWebView: WebView
     private lateinit var richContentContainer: View
-    private lateinit var locationBtn: Button
-    private lateinit var cameraBtn: Button
-    private lateinit var saveBtn: Button
-    private lateinit var errorArea: ScrollView
     private lateinit var errorText: TextView
 
     private val chatMessages = mutableListOf<ChatMessage>()
@@ -146,30 +146,45 @@ class MainActivity : AppCompatActivity() {
         }
 
         Log.i(DIAG, "MainActivity - findViewById")
-        serverInput = findViewById(R.id.server_address)
+        appTitle = findViewById(R.id.app_title)
+        serverSpinner = findViewById(R.id.server_spinner)
         promptInput = findViewById(R.id.prompt_input)
         askBtn = findViewById(R.id.ask_btn)
-        checkInBtn = findViewById(R.id.check_in_btn)
+        speakBtn = findViewById(R.id.speak_btn)
         micBtn = findViewById(R.id.mic_btn)
-        speakSwitch = findViewById(R.id.speak_switch)
+        menuBtn = findViewById(R.id.menu_btn)
         chatWebView = findViewById(R.id.chat_webview)
         richContentWebView = findViewById(R.id.rich_content_webview)
         richContentContainer = findViewById(R.id.rich_content_container)
-        locationBtn = findViewById(R.id.location_btn)
-        cameraBtn = findViewById(R.id.camera_btn)
-        saveBtn = findViewById(R.id.save_btn)
-        errorArea = findViewById(R.id.error_area)
         errorText = findViewById(R.id.error_text)
         Log.i(DIAG, "MainActivity - all findViewById done")
 
-        serverInput.setText(getString(R.string.default_server_address), android.widget.TextView.BufferType.EDITABLE)
+        appTitle.text = "Ember ${BuildConfig.VERSION_NAME}"
+        val presets = resources.getStringArray(R.array.server_presets)
+        val adapter = ArrayAdapter(this, R.layout.spinner_item_small, presets).apply {
+            setDropDownViewResource(R.layout.spinner_dropdown_small)
+        }
+        serverSpinner.adapter = adapter
+        serverSpinner.setSelection(
+            getSharedPreferences("ember", MODE_PRIVATE).getInt(PREF_SERVER_INDEX, 0).coerceIn(0, presets.size - 1)
+        )
+        serverSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>, view: View?, pos: Int, id: Long) {
+                getSharedPreferences("ember", MODE_PRIVATE).edit().putInt(PREF_SERVER_INDEX, pos).apply()
+                if (presets[pos] == getString(R.string.server_custom)) showCustomServerDialog()
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>) {}
+        })
         promptInput.hint = getString(R.string.prompt_hint)
 
-        speakSwitch.isChecked = getSharedPreferences("ember", MODE_PRIVATE).getBoolean(PREF_SPEAK_RESPONSES, true)
-        speakSwitch.setOnCheckedChangeListener { _, checked ->
-            getSharedPreferences("ember", MODE_PRIVATE).edit().putBoolean(PREF_SPEAK_RESPONSES, checked).apply()
+        menuBtn.setOnClickListener { showOverflowMenu() }
+        speakBtn.setOnClickListener {
+            val next = !isSpeakEnabled()
+            getSharedPreferences("ember", MODE_PRIVATE).edit().putBoolean(PREF_SPEAK_RESPONSES, next).apply()
+            updateSpeakButtonIcon()
         }
-        Log.i(DIAG, "MainActivity - prefs/speakSwitch done")
+        updateSpeakButtonIcon()
+        Log.i(DIAG, "MainActivity - menu setup done")
 
         Log.i(DIAG, "MainActivity - initializing TTS")
         tts = TextToSpeech(this) { status ->
@@ -195,7 +210,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         askBtn.setOnClickListener {
-            val addr = serverInput.text.toString().trim()
+            val addr = getServerAddress()
             var prompt = promptInput.text.toString().trim()
             when {
                 addr.isEmpty() -> Toast.makeText(this, getString(R.string.error_server), Toast.LENGTH_SHORT).show()
@@ -212,29 +227,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        checkInBtn.setOnClickListener {
-            val addr = serverInput.text.toString().trim()
-            when {
-                addr.isEmpty() -> Toast.makeText(this, getString(R.string.error_server), Toast.LENGTH_SHORT).show()
-                else -> askAi(addr, "__check_in__", getString(R.string.check_in))
-            }
-        }
-
-        locationBtn.setOnClickListener {
-            when {
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED -> onLocationRequested()
-                else -> multiPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-            }
-        }
-
-        cameraBtn.setOnClickListener {
-            when {
-                ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED -> launchCamera()
-                else -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-            }
-        }
-
-        saveBtn.setOnClickListener { saveChatToDisk() }
         Log.i(DIAG, "MainActivity.onCreate DONE")
     }
 
@@ -249,15 +241,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Supervisory process: actively monitors the control pipeline for pushed messages.
-     * Polls __fetch_push__, commits payloads to the DOM, and refreshes the display.
+     * Supervisory process: long-polls __fetch_push__ for pushed messages.
+     * Server holds the connection until a push arrives (or 60s timeout).
+     * Pushes are delivered immediately; no polling delay.
      */
     private fun startControlSupervisor() {
         stopControlSupervisor()
         pushPollJob = lifecycleScope.launch(Dispatchers.IO) {
-            delay(CONTROL_POLL_INTERVAL_MS)  // Wait before first poll
+            delay(CONTROL_POLL_INITIAL_DELAY_MS)
             while (isActive && !isDestroyed) {
-                val addr = withContext(Dispatchers.Main) { serverInput.text.toString().trim() }
+                val addr = withContext(Dispatchers.Main) { getServerAddress() }
                 if (addr.isNotEmpty()) {
                     try {
                         val result = EmberClient.askStreaming(addr, "__fetch_push__", object : TokenCallback {
@@ -273,7 +266,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     } catch (_: Exception) {}
                 }
-                delay(CONTROL_POLL_INTERVAL_MS)
+                // No delay: immediately start next long-poll. Server blocks until push or 60s.
             }
         }
     }
@@ -353,7 +346,7 @@ class MainActivity : AppCompatActivity() {
                     val msg = obj.getString("message")
                     if (msg.isNotBlank()) {
                         chatMessages.add(ChatMessage(msg, isUser = false))
-                        if (speakSwitch.isChecked) tts?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, null)
+                        if (isSpeakEnabled()) tts?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, null)
                     }
                 }
                 if (obj.optBoolean("refresh", false)) {
@@ -369,7 +362,7 @@ class MainActivity : AppCompatActivity() {
             chatMessages.add(ChatMessage(payload, isUser = false))
             renderChat()
             scrollToBottom()
-            if (speakSwitch.isChecked) tts?.speak(payload, TextToSpeech.QUEUE_FLUSH, null, null)
+            if (isSpeakEnabled()) tts?.speak(payload, TextToSpeech.QUEUE_FLUSH, null, null)
         }
     }
 
@@ -415,11 +408,83 @@ class MainActivity : AppCompatActivity() {
 
     private fun showError(msg: String) {
         errorText.text = msg
-        errorArea.visibility = View.VISIBLE
+        errorText.visibility = View.VISIBLE
     }
 
     private fun hideError() {
-        errorArea.visibility = View.GONE
+        errorText.visibility = View.GONE
+    }
+
+    private fun isSpeakEnabled(): Boolean =
+        getSharedPreferences("ember", MODE_PRIVATE).getBoolean(PREF_SPEAK_RESPONSES, true)
+
+    private fun updateSpeakButtonIcon() {
+        speakBtn.setImageResource(if (isSpeakEnabled()) R.drawable.ic_face_speak else R.drawable.ic_face_mute)
+    }
+
+    private fun getServerAddress(): String {
+        val presets = resources.getStringArray(R.array.server_presets)
+        val pos = serverSpinner.selectedItemPosition
+        return if (pos in presets.indices && presets[pos] == getString(R.string.server_custom)) {
+            getSharedPreferences("ember", MODE_PRIVATE).getString(PREF_CUSTOM_SERVER, "")?.trim() ?: ""
+        } else {
+            presets.getOrNull(pos)?.trim() ?: ""
+        }
+    }
+
+    private fun showCustomServerDialog() {
+        val input = EditText(this).apply {
+            setPadding(48, 32, 48, 32)
+            hint = getString(R.string.server_address_hint)
+            setText(getSharedPreferences("ember", MODE_PRIVATE).getString(PREF_CUSTOM_SERVER, ""))
+        }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.server_label))
+            .setView(input)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val url = input.text.toString().trim()
+                if (url.isNotEmpty()) {
+                    getSharedPreferences("ember", MODE_PRIVATE).edit().putString(PREF_CUSTOM_SERVER, url).apply()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showOverflowMenu() {
+        val popup = PopupMenu(this, menuBtn)
+        popup.menuInflater.inflate(R.menu.overflow_menu, popup.menu)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.menu_check_in -> {
+                    val addr = getServerAddress()
+                    if (addr.isEmpty()) Toast.makeText(this, getString(R.string.error_server), Toast.LENGTH_SHORT).show()
+                    else askAi(addr, "__check_in__", getString(R.string.check_in))
+                    true
+                }
+                R.id.menu_location -> {
+                    when {
+                        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED -> onLocationRequested()
+                        else -> multiPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                    }
+                    true
+                }
+                R.id.menu_camera -> {
+                    when {
+                        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED -> launchCamera()
+                        else -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                    true
+                }
+                R.id.menu_save -> {
+                    saveChatToDisk()
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
     }
 
     /** Reinitialize display: clear chat, rich content, error, prompt input; reset to default state. Called when __app_clear__ or "app clear" is received from ember server. */
@@ -485,7 +550,7 @@ class MainActivity : AppCompatActivity() {
     private fun askAi(addr: String, prompt: String, displayPrompt: String = prompt) {
         if (prompt != "__check_in__") promptInput.setText("")
         askBtn.isEnabled = false
-        checkInBtn.isEnabled = false
+        menuBtn.isEnabled = false
 
         // Fetch style from server on first use (or use cached)
         if (!hasFetchedStyle) {
@@ -621,7 +686,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     renderChat()
                     askBtn.isEnabled = true
-                    checkInBtn.isEnabled = true
+                    menuBtn.isEnabled = true
                     scrollToBottom()
                 }
             }
@@ -630,7 +695,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun speakIfEnabled(text: String) {
         val cleaned = text.replace(Regex("(?i)app\\s+clear[?!.\\s,]*"), "").trim()
-        if (cleaned.isNotEmpty() && speakSwitch.isChecked) speakText(cleaned)
+        if (cleaned.isNotEmpty() && isSpeakEnabled()) speakText(cleaned)
     }
 
     private fun speakText(text: String) {

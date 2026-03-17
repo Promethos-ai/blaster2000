@@ -310,6 +310,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let listen_addr: SocketAddr = format!("0.0.0.0:{}", listen_port).parse()?;
     let proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let push_notify: Arc<tokio::sync::Notify> = Arc::new(tokio::sync::Notify::new());
+    let last_coords: Arc<tokio::sync::Mutex<Option<(f64, f64)>>> = Arc::new(tokio::sync::Mutex::new(None));
     let style_file = Arc::new(style_file);
     let params_file = Arc::new(params_file);
     let brave_key = std::env::var("BRAVE_API_KEY").unwrap_or_default();
@@ -319,7 +321,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     let web_search = Arc::new((web_search, web_search_always, brave_key));
     let instructions_file = instructions_file.map(Arc::new);
-    run(listen_addr, push_port, inference_addr, conn_log, proactive_queue.clone(), style_file, params_file, instructions_file, web_search)
+    run(listen_addr, push_port, inference_addr, conn_log, proactive_queue.clone(), push_notify.clone(), last_coords.clone(), style_file, params_file, instructions_file, web_search)
 }
 
 /// Load optional instructions from file. Returns empty string if file missing or unreadable.
@@ -332,6 +334,7 @@ fn spawn_proactive_task(
     grpc_client: Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
     inference_addr: Arc<String>,
     queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    push_notify: Arc<tokio::sync::Notify>,
     params_file: Arc<String>,
     instructions_file: Option<Arc<String>>,
 ) {
@@ -354,6 +357,8 @@ fn spawn_proactive_task(
                         if q.len() > 5 {
                             q.remove(0);
                         }
+                        drop(q);
+                        push_notify.notify_one();
                         log("PROACTIVE", "queued check-in message");
                     }
                 }
@@ -368,6 +373,7 @@ fn spawn_readiness_task(
     grpc_client: Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
     inference_addr: Arc<String>,
     queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    push_notify: Arc<tokio::sync::Notify>,
 ) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static READY_SENT: AtomicBool = AtomicBool::new(false);
@@ -387,6 +393,8 @@ fn spawn_readiness_task(
                 if q.len() > 5 {
                     q.pop();
                 }
+                drop(q);
+                push_notify.notify_one();
                 log("READY", "inference backend ready; queued 'Ready for inference!' for app");
                 break;
             }
@@ -395,7 +403,11 @@ fn spawn_readiness_task(
 }
 
 /// File-based push: poll push-queue.txt, queue lines, then clear. Use when TCP push channel unavailable.
-fn spawn_push_file_watcher(queue: Arc<tokio::sync::Mutex<Vec<String>>>) {
+fn spawn_push_file_watcher(
+    queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    push_notify: Arc<tokio::sync::Notify>,
+    last_coords: Arc<tokio::sync::Mutex<Option<(f64, f64)>>>,
+) {
     tokio::spawn(async move {
         let path = std::path::Path::new("push-queue.txt");
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
@@ -409,14 +421,32 @@ fn spawn_push_file_watcher(queue: Arc<tokio::sync::Mutex<Vec<String>>>) {
                         .filter(|s| !s.is_empty())
                         .collect();
                     if !lines.is_empty() {
-                        let mut guard = queue.lock().await;
+                        let mut to_push: Vec<String> = Vec::new();
                         for line in &lines {
-                            guard.push(line.clone());
-                            if guard.len() > 10 {
-                                guard.remove(0);
+                            if line.eq_ignore_ascii_case("marquee") {
+                                let coords = last_coords.lock().await;
+                                let payload = if let Some((lat, lon)) = *coords {
+                                    build_marquee_payload(lat, lon).await
+                                } else {
+                                    r#"{"rich":"<div class=\"rich-card\"><p style=\"color:#e6edf3;\">No location yet. Add location from menu, then send a message.</p></div>"}"#.to_string()
+                                };
+                                to_push.push(payload);
+                                to_push.push("refresh".to_string());
+                                log("PUSH", "marquee from file (location-based)");
+                            } else {
+                                to_push.push(line.clone());
                             }
                         }
-                        drop(guard);
+                        {
+                            let mut guard = queue.lock().await;
+                            for msg in to_push {
+                                guard.push(msg);
+                                if guard.len() > 10 {
+                                    guard.remove(0);
+                                }
+                            }
+                        }
+                        push_notify.notify_one();
                         log("PUSH", &format!("from file queued {} line(s)", lines.len()));
                         let _ = std::fs::write(path, "");
                     }
@@ -427,8 +457,14 @@ fn spawn_push_file_watcher(queue: Arc<tokio::sync::Mutex<Vec<String>>>) {
 }
 
 /// TCP listener for push channel. External processes connect and send messages (one per line).
-/// Messages are queued for the app; app receives them on next __check_in__.
-fn spawn_push_listener(push_port: u16, queue: Arc<tokio::sync::Mutex<Vec<String>>>) {
+/// Messages are queued for the app; app receives them immediately via long-poll __fetch_push__.
+/// Special: "marquee" → fetch weather+gas for last coords, push rich HTML.
+fn spawn_push_listener(
+    push_port: u16,
+    queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    push_notify: Arc<tokio::sync::Notify>,
+    last_coords: Arc<tokio::sync::Mutex<Option<(f64, f64)>>>,
+) {
     tokio::spawn(async move {
         let addr: SocketAddr = match format!("0.0.0.0:{}", push_port).parse() {
             Ok(a) => a,
@@ -449,6 +485,8 @@ fn spawn_push_listener(push_port: u16, queue: Arc<tokio::sync::Mutex<Vec<String>
             match listener.accept().await {
                 Ok((stream, peer)) => {
                     let q = queue.clone();
+                    let notify = push_notify.clone();
+                    let coords = last_coords.clone();
                     tokio::spawn(async move {
                         let mut buf = String::new();
                         let mut reader = tokio::io::BufReader::new(stream);
@@ -462,21 +500,42 @@ fn spawn_push_listener(push_port: u16, queue: Arc<tokio::sync::Mutex<Vec<String>
                             if line.is_empty() {
                                 continue;
                             }
-                            let msg = if line.starts_with('{') {
-                                serde_json::from_str::<serde_json::Value>(&line)
-                                    .ok()
-                                    .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
-                                    .unwrap_or(line)
-                            } else {
-                                line
-                            };
-                            if !msg.is_empty() {
-                                let mut guard = q.lock().await;
-                                guard.push(msg.clone());
-                                if guard.len() > 10 {
-                                    guard.remove(0);
+                            if line.eq_ignore_ascii_case("marquee") {
+                                let guard = coords.lock().await;
+                                let payload = if let Some((lat, lon)) = *guard {
+                                    build_marquee_payload(lat, lon).await
+                                } else {
+                                    r#"{"rich":"<div class=\"rich-card\"><p style=\"color:#e6edf3;\">No location yet. Add location from menu, then send a message.</p></div>"}"#.to_string()
+                                };
+                                let mut g = q.lock().await;
+                                g.push(payload.clone());
+                                g.push("refresh".to_string());
+                                let len = g.len();
+                                if len > 10 {
+                                    g.drain(0..len.saturating_sub(10));
                                 }
-                                log("PUSH", &format!("from {} queued ({} chars)", peer, msg.len()));
+                                drop(g);
+                                notify.notify_one();
+                                log("PUSH", &format!("from {} queued marquee+refresh ({} chars)", peer, payload.len()));
+                            } else {
+                                let msg = if line.starts_with('{') {
+                                    serde_json::from_str::<serde_json::Value>(&line)
+                                        .ok()
+                                        .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+                                        .unwrap_or(line)
+                                } else {
+                                    line
+                                };
+                                if !msg.is_empty() {
+                                    let mut guard = q.lock().await;
+                                    guard.push(msg.clone());
+                                    if guard.len() > 10 {
+                                        guard.remove(0);
+                                    }
+                                    drop(guard);
+                                    notify.notify_one();
+                                    log("PUSH", &format!("from {} queued ({} chars)", peer, msg.len()));
+                                }
                             }
                         }
                     });
@@ -539,6 +598,8 @@ async fn run(
     inference_addr: String,
     conn_log: Option<Arc<std::sync::Mutex<std::fs::File>>>,
     proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    push_notify: Arc<tokio::sync::Notify>,
+    last_coords: Arc<tokio::sync::Mutex<Option<(f64, f64)>>>,
     style_file: Arc<String>,
     params_file: Arc<String>,
     instructions_file: Option<Arc<String>>,
@@ -564,22 +625,24 @@ async fn run(
         Arc::new(tokio::sync::Mutex::new(None));
     let inference_addr = Arc::new(inference_addr);
 
-    spawn_proactive_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone(), params_file.clone(), instructions_file.clone());
-    spawn_readiness_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone());
-    spawn_push_listener(push_port, proactive_queue.clone());
-    spawn_push_file_watcher(proactive_queue.clone());
+    spawn_proactive_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone(), push_notify.clone(), params_file.clone(), instructions_file.clone());
+    spawn_readiness_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone(), push_notify.clone());
+    spawn_push_listener(push_port, proactive_queue.clone(), push_notify.clone(), last_coords.clone());
+    spawn_push_file_watcher(proactive_queue.clone(), push_notify.clone(), last_coords.clone());
 
     while let Some(incoming) = endpoint.accept().await {
         let client_opt = grpc_client.clone();
         let addr = inference_addr.clone();
         let log = conn_log.clone();
         let queue = proactive_queue.clone();
+        let notify = push_notify.clone();
+        let coords = last_coords.clone();
         let style = style_file.clone();
         let params = params_file.clone();
         let instructions = instructions_file.clone();
         let web = web_search.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(incoming, client_opt, addr, log, queue, style, params, instructions, web).await {
+            if let Err(e) = handle_connection(incoming, client_opt, addr, log, queue, notify, coords, style, params, instructions, web).await {
                 log_err("CONN", &format!("error: {e}"));
             }
         });
@@ -611,6 +674,8 @@ async fn handle_connection(
     inference_addr: Arc<String>,
     conn_log: Option<Arc<std::sync::Mutex<std::fs::File>>>,
     proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    push_notify: Arc<tokio::sync::Notify>,
+    last_coords: Arc<tokio::sync::Mutex<Option<(f64, f64)>>>,
     style_file: Arc<String>,
     params_file: Arc<String>,
     instructions_file: Option<Arc<String>>,
@@ -632,13 +697,15 @@ async fn handle_connection(
         let addr = inference_addr.clone();
         let log = conn_log.clone();
         let queue = proactive_queue.clone();
+        let notify = push_notify.clone();
+        let coords = last_coords.clone();
         let style = style_file.clone();
         let params = params_file.clone();
         let instructions = instructions_file.clone();
         let web = web_search.clone();
         let remote_addr = remote;
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(&mut send, &mut recv, client_opt, addr, &log, queue, style, params, instructions, web, remote_addr).await {
+            if let Err(e) = handle_stream(&mut send, &mut recv, client_opt, addr, &log, queue, notify, coords, style, params, instructions, web, remote_addr).await {
                 log_err("STREAM", &format!("error: {e}"));
             }
         });
@@ -654,6 +721,8 @@ async fn handle_stream(
     inference_addr: Arc<String>,
     conn_log: &Option<Arc<std::sync::Mutex<std::fs::File>>>,
     proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
+    push_notify: Arc<tokio::sync::Notify>,
+    last_coords: Arc<tokio::sync::Mutex<Option<(f64, f64)>>>,
     style_file: Arc<String>,
     params_file: Arc<String>,
     instructions_file: Option<Arc<String>>,
@@ -679,6 +748,13 @@ async fn handle_stream(
         send_stream_error(send, 0, "What would you like to ask? Type something above and try again.").await?;
         log_connection(conn_log, &remote, "ERROR", "empty prompt");
         return Ok(());
+    }
+
+    // Store last coordinates when seen (for marquee, etc.)
+    if let Some((lat, lon)) = extract_coordinates(&prompt) {
+        let mut guard = last_coords.lock().await;
+        *guard = Some((lat, lon));
+        log("LOC", &format!("stored coordinates {:.4},{:.4}", lat, lon));
     }
 
     // ─── Control pipe: app protocol messages are executed here, never forwarded to the LLM ───
@@ -733,10 +809,23 @@ async fn handle_stream(
 
     let is_fetch_push = prompt.trim().eq_ignore_ascii_case("__fetch_push__");
     if is_fetch_push {
-        log("RECV", "fetch push (poll for queued messages)");
-        let mut q = proactive_queue.lock().await;
-        let msg = q.pop().unwrap_or_default();
-        drop(q);
+        log("RECV", "fetch push (long-poll for queued messages)");
+        let msg = loop {
+            let mut q = proactive_queue.lock().await;
+            if let Some(m) = q.pop() {
+                break m;
+            }
+            drop(q);
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                push_notify.notified(),
+            )
+            .await
+            {
+                Ok(()) => continue,
+                Err(_) => break String::new(),
+            }
+        };
         let interaction_id = {
             use std::sync::atomic::{AtomicU64, Ordering};
             static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -774,6 +863,7 @@ async fn handle_stream(
         let mut q = proactive_queue.lock().await;
         q.push("app clear".to_string());
         drop(q);
+        push_notify.notify_one();
         let interaction_id = {
             use std::sync::atomic::{AtomicU64, Ordering};
             static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -812,7 +902,7 @@ async fn handle_stream(
         } else {
             let extra = instructions_file.as_ref().map(|p| load_instructions(p)).unwrap_or_default();
             let llm_prompt = format_prompt(&prompt, true, "", false, false, &extra);
-            stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue).await
+            stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue, &push_notify).await
         }
     } else {
         let web_ctx = if web_search.0 && !is_context_only_prompt(&prompt) && (web_search.1 || should_search_web(&prompt)) {
@@ -845,7 +935,7 @@ async fn handle_stream(
         }
         let extra = instructions_file.as_ref().map(|p| load_instructions(p)).unwrap_or_default();
         let llm_prompt = format_prompt(&prompt_for_llm, false, &web_ctx, is_weather, is_user_contextual, &extra);
-        stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue).await
+        stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue, &push_notify).await
     };
 
     if let Err(e) = result {
@@ -1052,6 +1142,81 @@ fn extract_coordinates(prompt: &str) -> Option<(f64, f64)> {
     } else {
         None
     }
+}
+
+/// Fetch weather from Open-Meteo (free, no key).
+async fn fetch_weather(lat: f64, lon: f64) -> Option<String> {
+    let url = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto",
+        lat, lon
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("EmberServer/1.0")
+        .build()
+        .ok()?;
+    let data: serde_json::Value = client.get(&url).send().await.ok()?.json().await.ok()?;
+    let cur = data.get("current")?.as_object()?;
+    let temp = cur.get("temperature_2m")?.as_f64()?;
+    let code = cur.get("weather_code")?.as_u64()?;
+    let wind = cur.get("wind_speed_10m")?.as_f64().unwrap_or(0.0);
+    let desc = match code {
+        0 => "Clear",
+        1..=3 => "Partly cloudy",
+        45 | 48 => "Foggy",
+        51..=67 => "Rain",
+        71..=77 => "Snow",
+        80..=82 => "Showers",
+        85..=86 => "Snow showers",
+        95..=99 => "Thunderstorm",
+        _ => "Cloudy",
+    };
+    Some(format!("{}°F {} Wind {}mph", (temp * 9.0 / 5.0 + 32.0) as i32, desc, wind as i32))
+}
+
+/// Fetch nearby fuel stations from NREL (free DEMO_KEY). Returns EV/gas station names + distance.
+async fn fetch_gas_prices(lat: f64, lon: f64) -> String {
+    let url = format!(
+        "https://developer.nrel.gov/api/alt-fuel-stations/v1/nearest.json?api_key=DEMO_KEY&latitude={}&longitude={}&limit=3",
+        lat, lon
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .user_agent("EmberServer/1.0")
+        .build()
+        .ok();
+    if let Some(client) = client {
+        if let Ok(resp) = client.get(&url).send().await {
+            if resp.status().is_success() {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    if let Some(stations) = data.get("fuel_stations").and_then(|v| v.as_array()) {
+                        let mut parts: Vec<String> = Vec::new();
+                        for s in stations.iter().take(3) {
+                            let name = s.get("station_name").and_then(|v| v.as_str()).unwrap_or("Station");
+                            let dist = s.get("distance").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            parts.push(format!("{} {:.1}mi", name, dist));
+                        }
+                        if !parts.is_empty() {
+                            return format!("Fuel: {}", parts.join(" | "));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "Fuel: Check GasBuddy for local prices".to_string()
+}
+
+/// Build marquee rich HTML from weather + gas for given coordinates.
+async fn build_marquee_payload(lat: f64, lon: f64) -> String {
+    let weather = fetch_weather(lat, lon).await.unwrap_or_else(|| "Weather unavailable".to_string());
+    let gas = fetch_gas_prices(lat, lon).await;
+    let content = format!("{} | {} | {} | {}", weather, gas, weather, gas);
+    let escaped = content.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        r#"{{"rich":"<div class=\"rich-card\"><marquee direction=\"left\" behavior=\"scroll\" scrollamount=\"4\" style=\"font-size:15px;color:#e6edf3;padding:8px 0;\">{}</marquee></div>"}}"#,
+        escaped
+    )
 }
 
 /// Fetch local environment from coordinates: reverse geocode (Nominatim) + nearby features (Overpass).
@@ -1354,6 +1519,7 @@ async fn stream_inference(
     remote: &SocketAddr,
     params_file: &str,
     proactive_queue: &Arc<tokio::sync::Mutex<Vec<String>>>,
+    push_notify: &Arc<tokio::sync::Notify>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // stream_start
     let frame = stream_frame(json!({
@@ -1409,6 +1575,7 @@ async fn stream_inference(
                                         q.remove(0);
                                     }
                                     drop(q);
+                                    push_notify.notify_one();
                                     log("PUSH", &format!("→ queued control ({} chars)", content.len()));
                                 } else {
                                     if frame_type == "stream_rich" {
@@ -1445,6 +1612,7 @@ async fn stream_inference(
                                         q.remove(0);
                                     }
                                     drop(q);
+                                    push_notify.notify_one();
                                     log("PUSH", &format!("→ queued __control__ ({} chars)", t.len()));
                                 }
                                 let before = sanitize_chat_token(&before_stripped);
@@ -1499,6 +1667,7 @@ async fn stream_inference(
                                 q.remove(0);
                             }
                             drop(q);
+                            push_notify.notify_one();
                             log("PUSH", &format!("→ queued __control__ ({} chars)", t.len()));
                         }
                         let sanitized = sanitize_chat_token(&stripped);
@@ -1527,6 +1696,7 @@ async fn stream_inference(
                 q.remove(0);
             }
             drop(q);
+            push_notify.notify_one();
             log("PUSH", &format!("→ queued __control__ ({} chars)", t.len()));
         }
         let sanitized = sanitize_chat_token(&stripped);

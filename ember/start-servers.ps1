@@ -48,7 +48,7 @@ else { Write-Host "WARNING: grpc_server may not be ready. Ember will retry on fi
 # Load BRAVE_API_KEY from .env for realtime web search
 $loadBrave = "if (Test-Path '.env') { Get-Content '.env' | ForEach-Object { if (`$_ -match '^\s*BRAVE_API_KEY=(.+)$') { `$env:BRAVE_API_KEY = `$matches[1].Trim() } } }; "
 Write-Host "Starting ember-server on UDP 4433 (Brave realtime search)..." -ForegroundColor Cyan
-$emberCmd = if (Test-Path "$emberDir\target\release\ember-server.exe") { "& .\target\release\ember-server.exe --port 4433 --inference http://127.0.0.1:50051 --web-search --web-search-always" } else { "cargo run -p ember-server -- --port 4433 --inference http://127.0.0.1:50051 --web-search --web-search-always" }
+$emberCmd = if (Test-Path "$emberDir\target\release\ember-server.exe") { "& .\target\release\ember-server.exe --port 4433 --inference http://127.0.0.1:50051 --web-search --web-search-always --instructions-file instructions.txt" } else { "cargo run -p ember-server -- --port 4433 --inference http://127.0.0.1:50051 --web-search --web-search-always --instructions-file instructions.txt" }
 Start-Process powershell -ArgumentList @(
     "-NoExit",
     "-Command",

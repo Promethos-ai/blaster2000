@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- ChatGPT/Grok-style: chat-first, input at bottom, minimal chrome -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root_layout"
@@ -7,193 +8,68 @@
     android:orientation="vertical"
     android:background="@color/background_dark">
 
-    <!-- Header with app name and server -->
+    <!-- Compact header: Ember version + server dropdown + menu -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="@dimen/padding_screen"
-        android:paddingBottom="@dimen/padding_screen_small">
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp"
+        android:background="@color/surface_dark"
+        android:minHeight="36dp">
 
         <TextView
+            android:id="@+id/app_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
-            android:textSize="@dimen/header_text_size"
+            android:textSize="12sp"
             android:textStyle="bold"
             android:textColor="@color/text_primary"
-            android:layout_marginBottom="@dimen/spacing_tight" />
+            android:layout_marginEnd="8dp" />
 
-        <EditText
-            android:id="@+id/server_address"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/min_touch_target"
-            android:padding="@dimen/padding_screen_small"
-            android:hint="@string/server_address_hint"
-            android:textColorHint="@color/text_secondary"
-            android:textColor="@color/text_primary"
+        <Spinner
+            android:id="@+id/server_spinner"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="28dp"
+            android:minWidth="80dp"
             android:background="@drawable/input_field_bg"
-            android:inputType="textUri"
-            android:textSize="@dimen/input_text_size" />
+            android:paddingHorizontal="6dp"
+            android:spinnerMode="dropdown" />
+
+        <ImageButton
+            android:id="@+id/menu_btn"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Menu"
+            android:src="@drawable/ic_more"
+            android:tint="@color/text_primary"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="centerInside" />
     </LinearLayout>
 
-    <!-- Rich content area: weather, email previews, etc. (HTML, real-time updates) -->
+    <!-- Rich content: inline card with border, chicken placeholder when empty -->
     <FrameLayout
         android:id="@+id/rich_content_container"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/surface_dark"
-        android:visibility="gone">
+        android:background="@drawable/rich_content_border"
+        android:padding="2dp"
+        android:visibility="visible">
 
         <WebView
             android:id="@+id/rich_content_webview"
             android:layout_width="match_parent"
-            android:layout_height="@dimen/rich_content_height"
-            android:background="@color/surface_dark"
+            android:layout_height="120dp"
+            android:background="@android:color/transparent"
             android:scrollbars="vertical"
-            android:padding="@dimen/padding_screen_small" />
+            android:padding="8dp" />
     </FrameLayout>
 
-    <!-- Input area: homed above chat so it stays visible; new answers appear below -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="@dimen/padding_screen"
-        android:background="@color/background_dark">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="@dimen/spacing_normal">
-
-            <EditText
-                android:id="@+id/prompt_input"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:minLines="1"
-                android:minHeight="@dimen/min_touch_target"
-                android:padding="@dimen/padding_screen_small"
-                android:inputType="textMultiLine|textCapSentences"
-                android:hint="@string/prompt_hint"
-                android:textColorHint="@color/text_secondary"
-                android:textColor="@color/text_primary"
-                android:background="@drawable/input_field_bg"
-                android:maxLines="4" />
-
-            <ImageButton
-                android:id="@+id/mic_btn"
-                android:layout_width="@dimen/min_touch_target"
-                android:layout_height="@dimen/min_touch_target"
-                android:layout_marginStart="@dimen/spacing_normal"
-                android:contentDescription="@string/mic_desc"
-                android:src="@drawable/ic_mic"
-                android:tint="@color/accent_blue"
-                android:background="?attr/selectableItemBackgroundBorderless" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginBottom="@dimen/spacing_normal">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-                <Switch
-                    android:id="@+id/speak_switch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/speak_responses"
-                    android:textColor="@color/text_primary" />
-                <Button
-                    android:id="@+id/check_in_btn"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="@dimen/spacing_wide"
-                    android:text="@string/check_in"
-                    android:textAllCaps="false"
-                    android:background="@drawable/btn_primary" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginTop="@dimen/spacing_tight">
-                <Button
-                    android:id="@+id/location_btn"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="@dimen/spacing_tight"
-                    android:text="@string/attach_location"
-                    android:textAllCaps="false"
-                    android:textSize="@dimen/button_text_size_small"
-                    android:background="@drawable/btn_primary" />
-                <Button
-                    android:id="@+id/camera_btn"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="@dimen/spacing_tight"
-                    android:layout_marginEnd="@dimen/spacing_tight"
-                    android:text="@string/attach_camera"
-                    android:textAllCaps="false"
-                    android:textSize="@dimen/button_text_size_small"
-                    android:background="@drawable/btn_primary" />
-                <Button
-                    android:id="@+id/save_btn"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="@dimen/spacing_tight"
-                    android:text="@string/save_chat"
-                    android:textAllCaps="false"
-                    android:textSize="@dimen/button_text_size_small"
-                    android:background="@drawable/btn_primary" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/ask_btn"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/min_touch_target"
-            android:text="@string/ask_ai"
-            android:textColor="@color/white"
-            android:textAllCaps="false"
-            android:background="@drawable/btn_primary" />
-    </LinearLayout>
-
-    <!-- Error area: fixed height, scrolls internally, does not scroll main window -->
-    <ScrollView
-        android:id="@+id/error_area"
-        android:layout_width="match_parent"
-        android:layout_height="@dimen/error_area_height"
-        android:visibility="gone"
-        android:background="@color/surface_dark"
-        android:fillViewport="true"
-        android:scrollbars="vertical">
-
-        <TextView
-            android:id="@+id/error_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="@dimen/spacing_normal"
-            android:textSize="11sp"
-            android:textColor="@color/text_secondary" />
-    </ScrollView>
-
-    <!-- Chat messages (WebView with server CSS, full width, copy/paste); scroll to read -->
+    <!-- Chat: main content, fills space, scrolls -->
     <WebView
         android:id="@+id/chat_webview"
         android:layout_width="match_parent"
@@ -201,4 +77,75 @@
         android:layout_weight="1"
         android:background="@color/background_dark"
         android:scrollbars="vertical" />
+
+    <!-- Error: minimal, above input -->
+    <TextView
+        android:id="@+id/error_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:textColor="@color/text_secondary"
+        android:background="@color/surface_dark" />
+
+    <!-- Input bar: fixed at bottom (ChatGPT/Grok style), compact buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="8dp"
+        android:background="@color/surface_dark">
+
+        <EditText
+            android:id="@+id/prompt_input"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:minHeight="38dp"
+            android:minLines="1"
+            android:maxLines="4"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="8dp"
+            android:inputType="textMultiLine|textCapSentences"
+            android:hint="@string/prompt_hint"
+            android:textColorHint="@color/text_secondary"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/input_field_bg"
+            android:textSize="15sp"
+            android:layout_marginEnd="6dp" />
+
+        <ImageButton
+            android:id="@+id/speak_btn"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginEnd="2dp"
+            android:contentDescription="@string/speak_responses"
+            android:src="@drawable/ic_face_speak"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="centerInside" />
+
+        <ImageButton
+            android:id="@+id/mic_btn"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginEnd="2dp"
+            android:contentDescription="@string/mic_desc"
+            android:src="@drawable/ic_mic"
+            android:tint="@color/accent_blue"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="centerInside" />
+
+        <ImageButton
+            android:id="@+id/ask_btn"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:contentDescription="@string/ask_ai"
+            android:src="@drawable/ic_send"
+            android:tint="@color/accent_blue"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="centerInside" />
+    </LinearLayout>
 </LinearLayout>
