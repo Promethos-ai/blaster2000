@@ -59,6 +59,18 @@ Or manually:
 - **USB:** `adb install app-release-unsigned.apk`
 - **Direct:** Copy APK to phone, open it (enable "Install from unknown sources" if needed)
 
+### Ember Loader (check for updates)
+
+A separate **Ember Loader** app fetches GitHub releases and downloads/installs the latest Ember APK. Install it once to keep Ember updated.
+
+```powershell
+cd android
+.\gradlew.bat :loader:assembleDebug
+# APK at android/loader/build/outputs/apk/debug/loader-debug.apk
+```
+
+Install the loader APK, then use it to fetch and install new Ember releases.
+
 ### Run the server
 
 On your home PC, forward UDP port **4433** and run `cargo run -p ember-server`. Enter your PC's IP (e.g. `192.168.1.100:4433`) in the app.

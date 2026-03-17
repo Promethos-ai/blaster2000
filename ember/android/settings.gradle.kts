@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Ember"
 include(":app")
+include(":loader")

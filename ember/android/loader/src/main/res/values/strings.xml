@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ember Loader</string>
+    <string name="checking">Checking for updates…</string>
+    <string name="current">Current: %s</string>
+    <string name="latest">Latest: %s</string>
+    <string name="download">Download &amp; Install</string>
+    <string name="downloading">Downloading… %d%%</string>
+    <string name="installing">Installing…</string>
+    <string name="up_to_date">Ember is up to date</string>
+    <string name="error_fetch">Couldn\'t fetch releases</string>
+    <string name="error_download">Download failed</string>
+    <string name="error_install">Install failed — enable \"Install from unknown sources\"</string>
+</resources>

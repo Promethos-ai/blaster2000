@@ -11,5 +11,6 @@ ember.keystore
 android/keystore.properties
 android/.gradle/
 android/app/build/
+android/loader/build/
 client/android/
 nssm/
