@@ -65,6 +65,33 @@ On your home PC, forward UDP port **4433** and run `cargo run -p ember-server`. 
 
 **Real-time web search (Brave):** Add `--web-search --web-search-always` and set `BRAVE_API_KEY` (in `.env` or env) to enable. Every query fetches current web context before inference. Use `--brave-api-key KEY` to pass the key via CLI. Get a key at [api.search.brave.com](https://api.search.brave.com).
 
+### Push channel (rewrite app content and structure in real time)
+
+The server exposes a TCP push channel (default port **4434**) so external processes can push messages or **structured payloads** that rewrite the entire app state.
+
+```powershell
+# Plain message (appends to chat)
+.\push-to-ember.ps1 "Hello from the server!"
+
+# Structured payload (full control)
+.\push-to-ember.ps1 -Payload '{"chat":[{"text":"Hi","isUser":true},{"text":"Hello!","isUser":false}],"rich":"<div class=\"card\"><h3>Dashboard</h3></div>","layout":{"rich_height":"full"}}'
+.\push-to-ember.ps1 -PayloadFile payload.json
+```
+
+**Structured payload (JSON):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `chat` | `[{text, isUser}, ...]` | Replace entire chat history |
+| `chatCss` | string | CSS for chat area |
+| `rich` | string | HTML for rich content area (top); empty = clear |
+| `richStyle` | string | CSS to inject into rich area |
+| `layout` | `{rich_height, theme}` | Layout hints (`rich_height`: "full", "auto", "140") |
+| `input` | string | Prefill the prompt input |
+| `message` | string | Append as AI message (fallback) |
+
+Use `--push-port N` to change the port. Forward TCP port 4434 if pushing from another machine.
+
 ### Fine-tuning inference parameters
 
 The server reads inference parameters from a JSON file on **every request**, so you can adjust them between messages without restarting. Edit `inference_params.json` in the ember directory (or use `--params-file PATH`):

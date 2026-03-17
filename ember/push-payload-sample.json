@@ -1,0 +1,11 @@
+{
+  "chat": [
+    {"text": "User asked about the weather", "isUser": true},
+    {"text": "Here's your personalized dashboard.", "isUser": false}
+  ],
+  "chatCss": "body { background: #0d1117; color: #e6edf3; } .message.user { background: #238636; } .message.ai { background: #21262d; }",
+  "rich": "<div style='padding:16px;background:linear-gradient(135deg,#1a1a2e,#16213e);border-radius:12px;color:#eee'><h3 style='margin:0 0 12px 0'>Live Dashboard</h3><p>Content and structure can be rewritten in real time.</p></div>",
+  "richStyle": "body { font-family: system-ui; } .card { padding: 12px; margin: 8px 0; }",
+  "layout": {"rich_height": "full", "theme": "dark"},
+  "input": "Try asking something..."
+}

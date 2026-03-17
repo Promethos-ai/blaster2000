@@ -201,6 +201,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut inference_addr = "https://127.0.0.1:50051".to_string();
     let mut listen_port: u16 = 4433;
+    let mut push_port: u16 = 4434;
     let mut log_file: Option<String> = Some("ember-connections.log".to_string());
     let mut style_file = "server/chat-style.css".to_string();
     let mut params_file = "inference_params.json".to_string();
@@ -217,6 +218,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if args[i] == "--port" && i + 1 < args.len() {
             if let Ok(p) = args[i + 1].parse() {
                 listen_port = p;
+            }
+            i += 2;
+            continue;
+        }
+        if args[i] == "--push-port" && i + 1 < args.len() {
+            if let Ok(p) = args[i + 1].parse() {
+                push_port = p;
             }
             i += 2;
             continue;
@@ -285,7 +293,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         log_err("SERVER", "Get a key at https://api.search.brave.com");
     }
     let web_search = Arc::new((web_search, web_search_always, brave_key));
-    run(listen_addr, inference_addr, conn_log, proactive_queue.clone(), style_file, params_file, web_search)
+    run(listen_addr, push_port, inference_addr, conn_log, proactive_queue.clone(), style_file, params_file, web_search)
 }
 
 /// Background task: every 30 min, generate a proactive check-in and push to queue.
@@ -353,6 +361,67 @@ fn spawn_readiness_task(
     });
 }
 
+/// TCP listener for push channel. External processes connect and send messages (one per line).
+/// Messages are queued for the app; app receives them on next __check_in__.
+fn spawn_push_listener(push_port: u16, queue: Arc<tokio::sync::Mutex<Vec<String>>>) {
+    tokio::spawn(async move {
+        let addr: SocketAddr = match format!("0.0.0.0:{}", push_port).parse() {
+            Ok(a) => a,
+            Err(e) => {
+                log_err("PUSH", &format!("invalid push port: {e}"));
+                return;
+            }
+        };
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                log_err("PUSH", &format!("bind failed: {e}"));
+                return;
+            }
+        };
+        log("PUSH", &format!("listening on {} (write messages for app)", addr));
+        loop {
+            match listener.accept().await {
+                Ok((stream, peer)) => {
+                    let q = queue.clone();
+                    tokio::spawn(async move {
+                        let mut buf = String::new();
+                        let mut reader = tokio::io::BufReader::new(stream);
+                        use tokio::io::AsyncBufReadExt;
+                        while let Ok(n) = reader.read_line(&mut buf).await {
+                            if n == 0 {
+                                break;
+                            }
+                            let line = buf.trim_end_matches('\n').trim_end_matches('\r').to_string();
+                            buf.clear();
+                            if line.is_empty() {
+                                continue;
+                            }
+                            let msg = if line.starts_with('{') {
+                                serde_json::from_str::<serde_json::Value>(&line)
+                                    .ok()
+                                    .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+                                    .unwrap_or(line)
+                            } else {
+                                line
+                            };
+                            if !msg.is_empty() {
+                                let mut guard = q.lock().await;
+                                guard.push(msg.clone());
+                                if guard.len() > 10 {
+                                    guard.remove(0);
+                                }
+                                log("PUSH", &format!("from {} queued ({} chars)", peer, msg.len()));
+                            }
+                        }
+                    });
+                }
+                Err(e) => log_err("PUSH", &format!("accept error: {e}")),
+            }
+        }
+    });
+}
+
 /// Check if grpc_server is ready (model loaded). Creates client if needed.
 async fn check_grpc_ready(
     client_opt: &Arc<tokio::sync::Mutex<Option<GrpcClient>>>,
@@ -401,6 +470,7 @@ async fn check_grpc_ready(
 #[tokio::main]
 async fn run(
     listen_addr: SocketAddr,
+    push_port: u16,
     inference_addr: String,
     conn_log: Option<Arc<std::sync::Mutex<std::fs::File>>>,
     proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>>,
@@ -412,6 +482,7 @@ async fn run(
     let endpoint = Endpoint::server(server_config, listen_addr)?;
 
     log("SERVER", &format!("listening on {}", endpoint.local_addr()?));
+    log("SERVER", &format!("push channel: TCP {} (write messages for app)", push_port));
     log("SERVER", &format!("inference: {} (QUIC if https://, TCP if http://)", inference_addr));
     log("SERVER", &format!("params file: {} (edit between requests to tune output)", params_file.as_str()));
     if web_search.0 {
@@ -426,6 +497,7 @@ async fn run(
 
     spawn_proactive_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone(), params_file.clone());
     spawn_readiness_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone());
+    spawn_push_listener(push_port, proactive_queue.clone());
 
     while let Some(incoming) = endpoint.accept().await {
         let client_opt = grpc_client.clone();
@@ -556,6 +628,38 @@ async fn handle_stream(
         send.flush().await?;
         send.finish()?;
         log("SEND", &format!("style ({} chars)", css.len()));
+        return Ok(());
+    }
+
+    let is_fetch_push = prompt.eq_ignore_ascii_case("__fetch_push__");
+    if is_fetch_push {
+        log("RECV", "fetch push (poll for queued messages)");
+        let mut q = proactive_queue.lock().await;
+        let msg = q.pop().unwrap_or_default();
+        drop(q);
+        let interaction_id = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        };
+        send.write_all(&stream_frame(json!({
+            "type": "stream_start",
+            "interaction_id": interaction_id
+        }))).await?;
+        if !msg.is_empty() {
+            send.write_all(&stream_frame(json!({
+                "type": "stream_token",
+                "token": msg,
+                "interaction_id": interaction_id
+            }))).await?;
+        }
+        send.write_all(&stream_frame(json!({
+            "type": "stream_end",
+            "interaction_id": interaction_id
+        }))).await?;
+        send.flush().await?;
+        send.finish()?;
+        log("SEND", &format!("fetch_push ({} chars)", msg.len()));
         return Ok(());
     }
 
@@ -791,6 +895,7 @@ fn is_context_only_prompt(prompt: &str) -> bool {
         "battery:",
         "__get_style__",
         "__check_in__",
+        "__fetch_push__",
     ];
     context_patterns.iter().any(|p| lower.contains(p))
 }

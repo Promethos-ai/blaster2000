@@ -22,7 +22,11 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -36,6 +40,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_CHAT_IS_USER = "chat_is_user"
         private const val PREF_SPEAK_RESPONSES = "speak_responses"
         private const val STREAM_UPDATE_DELAY_MS = 80L  // Batch tokens for smoother display
+        private const val PUSH_POLL_INTERVAL_MS = 25_000L  // Poll for pushed messages when in foreground
     }
 
     private lateinit var serverInput: EditText
@@ -59,6 +64,8 @@ class MainActivity : AppCompatActivity() {
 
     private val streamUpdateHandler = Handler(Looper.getMainLooper())
     private var pendingStreamUpdate: Runnable? = null
+
+    private var pushPollJob: Job? = null
 
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -205,6 +212,115 @@ class MainActivity : AppCompatActivity() {
 
         saveBtn.setOnClickListener { saveChatToDisk() }
         Log.i(DIAG, "MainActivity.onCreate DONE")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        startPushPoll()
+    }
+
+    override fun onPause() {
+        stopPushPoll()
+        super.onPause()
+    }
+
+    /** Poll for pushed messages when app is in foreground. Uses __fetch_push__ (no LLM call). */
+    private fun startPushPoll() {
+        stopPushPoll()
+        pushPollJob = lifecycleScope.launch(Dispatchers.IO) {
+            delay(PUSH_POLL_INTERVAL_MS)  // Wait before first poll
+            while (isActive && !isDestroyed) {
+                val addr = withContext(Dispatchers.Main) { serverInput.text.toString().trim() }
+                if (addr.isNotEmpty()) {
+                    try {
+                        val result = EmberClient.askStreaming(addr, "__fetch_push__", object : TokenCallback {
+                            override fun onToken(token: String) {}
+                        })
+                        if (result.isNotBlank()) {
+                            withContext(Dispatchers.Main) {
+                                if (!isDestroyed) applyPushPayload(result.trim())
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+                delay(PUSH_POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun stopPushPoll() {
+        pushPollJob?.cancel()
+        pushPollJob = null
+    }
+
+    /**
+     * Apply a push payload. Supports:
+     * - Plain text: append as AI message
+     * - JSON: { chat, chatCss, rich, richStyle, layout, input, message }
+     *   - chat: [{text, isUser}, ...] - replace entire chat
+     *   - chatCss: CSS string - chat area styling
+     *   - rich: HTML - replace rich content area
+     *   - richStyle: CSS - inject into rich area
+     *   - layout: {rich_height, theme} - layout hints
+     *   - input: string - prefill prompt input
+     *   - message: string - append as AI message (fallback)
+     */
+    private fun applyPushPayload(payload: String) {
+        if (payload.startsWith("{")) {
+            try {
+                val obj = org.json.JSONObject(payload)
+                if (obj.has("chat")) {
+                    chatMessages.clear()
+                    val arr = obj.getJSONArray("chat")
+                    for (i in 0 until arr.length()) {
+                        val m = arr.getJSONObject(i)
+                        chatMessages.add(ChatMessage(
+                            m.optString("text", ""),
+                            m.optBoolean("isUser", false)
+                        ))
+                    }
+                }
+                if (obj.has("chatCss")) {
+                    chatCss = obj.getString("chatCss")
+                }
+                if (obj.has("rich")) {
+                    val html = obj.getString("rich")
+                    if (html.isBlank()) {
+                        RichContentWebView.clear(richContentWebView, richContentContainer)
+                    } else {
+                        RichContentWebView.updateContent(richContentWebView, richContentContainer, html)
+                    }
+                }
+                if (obj.has("richStyle")) {
+                    RichContentWebView.applyStyle(richContentWebView, obj.getString("richStyle"))
+                }
+                if (obj.has("layout")) {
+                    applyLayout(obj.getJSONObject("layout").toString())
+                }
+                if (obj.has("input")) {
+                    promptInput.setText(obj.getString("input"))
+                }
+                if (obj.has("message")) {
+                    val msg = obj.getString("message")
+                    if (msg.isNotBlank()) {
+                        chatMessages.add(ChatMessage(msg, isUser = false))
+                        if (speakSwitch.isChecked) tts?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, null)
+                    }
+                }
+                renderChat()
+                scrollToBottom()
+            } catch (e: Exception) {
+                Log.e(TAG, "applyPushPayload parse error", e)
+                chatMessages.add(ChatMessage(payload, isUser = false))
+                renderChat()
+                scrollToBottom()
+            }
+        } else {
+            chatMessages.add(ChatMessage(payload, isUser = false))
+            renderChat()
+            scrollToBottom()
+            if (speakSwitch.isChecked) tts?.speak(payload, TextToSpeech.QUEUE_FLUSH, null, null)
+        }
     }
 
     private fun onLocationRequested() {
