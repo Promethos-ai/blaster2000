@@ -11,10 +11,11 @@ $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # Server address is hardcoded in android/app/src/main/res/values/server_defaults.xml
 
-# Clear stale Cargo locks (e.g. from crashed/stopped builds)
-$targetDir = Join-Path $rootDir "target"
-if (Test-Path $targetDir) {
-    Get-ChildItem -Path $targetDir -Recurse -Force -Filter ".cargo-lock" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+# Remove file locks before building (kills cargo/rustc/servers, clears .cargo-lock, Gradle locks)
+if (Test-Path "d:\rust\remove-all-locks.ps1") {
+    Write-Host "Removing file locks..." -ForegroundColor Yellow
+    & "d:\rust\remove-all-locks.ps1"
+    Start-Sleep -Seconds 2
 }
 if ($Clean) {
     Write-Host "Running cargo clean (removes target/)..." -ForegroundColor Yellow
@@ -30,7 +31,7 @@ New-Item -ItemType Directory -Force -Path $jniLibs | Out-Null
 
 Push-Location $rootDir
 try {
-    cargo ndk -t arm64-v8a -t armeabi-v7a -o $jniLibs build -p ember-client --features android --release
+    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o $jniLibs build -p ember-client --features android --release
     if ($LASTEXITCODE -ne 0) { throw "cargo ndk failed" }
 } finally {
     Pop-Location

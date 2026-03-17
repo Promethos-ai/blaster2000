@@ -12,9 +12,11 @@ object EmberClient {
     external fun askStreaming(serverAddr: String, prompt: String, callback: TokenCallback): String
 
     /** Fetch CSS style template from server (for dynamic styling). Returns default if fetch fails. */
-    fun fetchStyle(serverAddr: String): String {
+    fun fetchStyle(serverAddr: String): String = try {
         val result = askStreaming(serverAddr, "__get_style__", TokenCallback { })
-        return if (result.startsWith("Error:")) DEFAULT_CHAT_CSS else result
+        if (result.startsWith("Error:")) DEFAULT_CHAT_CSS else result
+    } catch (_: Throwable) {
+        DEFAULT_CHAT_CSS
     }
 
     internal val DEFAULT_CHAT_CSS = """

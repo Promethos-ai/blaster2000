@@ -37,6 +37,23 @@
             android:textSize="13sp" />
     </LinearLayout>
 
+    <!-- Rich content area: weather, email previews, etc. (HTML, real-time updates) -->
+    <FrameLayout
+        android:id="@+id/rich_content_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/surface_dark"
+        android:visibility="gone">
+
+        <WebView
+            android:id="@+id/rich_content_webview"
+            android:layout_width="match_parent"
+            android:layout_height="140dp"
+            android:background="@color/surface_dark"
+            android:scrollbars="vertical"
+            android:padding="12dp" />
+    </FrameLayout>
+
     <!-- Chat messages (WebView with server CSS, full width, copy/paste) -->
     <WebView
         android:id="@+id/chat_webview"

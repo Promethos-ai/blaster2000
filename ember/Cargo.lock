@@ -273,7 +273,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "ember-client"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "bytes",
  "jni",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "ember-server"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "chrono",
  "dotenvy",

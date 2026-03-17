@@ -9,10 +9,12 @@ $ErrorActionPreference = "Stop"
 $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $feb17Dir = Join-Path (Split-Path -Parent $rootDir) "Feb17"
 
-# Stop any existing servers
-Write-Host "Stopping existing servers..." -ForegroundColor Yellow
-Get-Process -Name "ember-server","grpc_server" -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 2
+# Remove file locks before running
+if (Test-Path "d:\rust\remove-all-locks.ps1") {
+    Write-Host "Removing file locks..." -ForegroundColor Yellow
+    & "d:\rust\remove-all-locks.ps1"
+    Start-Sleep -Seconds 2
+}
 
 Write-Host ""
 Write-Host "Start both servers in separate terminals for detailed logging:" -ForegroundColor Green

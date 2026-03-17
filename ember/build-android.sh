@@ -8,7 +8,7 @@ JNI_LIBS="$ROOT/android/app/src/main/jniLibs"
 
 echo "Building Rust library for Android..."
 mkdir -p "$JNI_LIBS"
-cargo ndk -t arm64-v8a -t armeabi-v7a -o "$JNI_LIBS" build -p ember-client --features android --release
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o "$JNI_LIBS" build -p ember-client --features android --release
 
 echo ""
 echo "Building Android APK..."

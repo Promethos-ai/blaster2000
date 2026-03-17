@@ -10,6 +10,7 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.RecognizerIntent
 import android.util.Log
+import android.view.View
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
@@ -44,6 +45,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var micBtn: ImageButton
     private lateinit var speakSwitch: Switch
     private lateinit var chatWebView: WebView
+    private lateinit var richContentWebView: WebView
+    private lateinit var richContentContainer: View
     private lateinit var locationBtn: Button
     private lateinit var cameraBtn: Button
     private lateinit var saveBtn: Button
@@ -121,6 +124,8 @@ class MainActivity : AppCompatActivity() {
         micBtn = findViewById(R.id.mic_btn)
         speakSwitch = findViewById(R.id.speak_switch)
         chatWebView = findViewById(R.id.chat_webview)
+        richContentWebView = findViewById(R.id.rich_content_webview)
+        richContentContainer = findViewById(R.id.rich_content_container)
         locationBtn = findViewById(R.id.location_btn)
         cameraBtn = findViewById(R.id.camera_btn)
         saveBtn = findViewById(R.id.save_btn)
@@ -147,6 +152,7 @@ class MainActivity : AppCompatActivity() {
 
         Log.i(DIAG, "MainActivity - ChatWebView.configure")
         ChatWebView.configure(chatWebView)
+        RichContentWebView.configure(richContentWebView)
         savedInstanceState?.getStringArray(KEY_CHAT_TEXTS)?.let { texts ->
             savedInstanceState.getBooleanArray(KEY_CHAT_IS_USER)?.let { isUser ->
                 if (texts.size == isUser.size) {
@@ -240,6 +246,26 @@ class MainActivity : AppCompatActivity() {
         chatWebView.evaluateJavascript("window.scrollTo(0, document.body.scrollHeight);", null)
     }
 
+    /** If the text contains HTML (weather, email preview, etc.), show it in the rich content area. */
+    private fun updateRichContentIfHtml(text: String) {
+        val trimmed = text.trimStart()
+        if (trimmed.startsWith("<div") || trimmed.startsWith("<section") || trimmed.startsWith("<article") ||
+            trimmed.contains("<div") || trimmed.contains("<p ") || trimmed.contains("<strong>")) {
+            val html = extractHtmlBlock(text)
+            if (html.isNotBlank()) {
+                RichContentWebView.updateContent(richContentWebView, richContentContainer, html)
+            }
+        }
+    }
+
+    /** Extract HTML block from mixed content (e.g. weather card, email preview). */
+    private fun extractHtmlBlock(text: String): String {
+        val start = text.indexOf('<')
+        if (start < 0) return ""
+        // Take from first < to end; WebView tolerates trailing text
+        return text.substring(start)
+    }
+
     private fun startVoiceInput() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -271,6 +297,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun doAskAi(addr: String, prompt: String, displayPrompt: String) {
+        RichContentWebView.clear(richContentWebView, richContentContainer)
         chatMessages.add(ChatMessage(displayPrompt, isUser = true))
         chatMessages.add(ChatMessage(getString(R.string.asking), isUser = false))
         renderChat()
@@ -294,6 +321,7 @@ class MainActivity : AppCompatActivity() {
                                     if (last >= 0 && !chatMessages[last].isUser) {
                                         chatMessages[last] = ChatMessage(textToShow, isUser = false)
                                         ChatWebView.updateLastAiMessage(chatWebView, textToShow)
+                                        updateRichContentIfHtml(textToShow)
                                         scrollToBottom()
                                     }
                                 }
@@ -307,6 +335,7 @@ class MainActivity : AppCompatActivity() {
                                         if (last >= 0 && !chatMessages[last].isUser) {
                                             chatMessages[last] = ChatMessage(textToShow, isUser = false)
                                             ChatWebView.updateLastAiMessage(chatWebView, textToShow)
+                                            updateRichContentIfHtml(textToShow)
                                             scrollToBottom()
                                         }
                                     }
@@ -333,6 +362,7 @@ class MainActivity : AppCompatActivity() {
                     if (last >= 0 && !chatMessages[last].isUser) {
                         val displayResult = if (result.startsWith("Error: ")) result.removePrefix("Error: ") else result
                         chatMessages[last] = ChatMessage(displayResult, isUser = false)
+                        updateRichContentIfHtml(displayResult)
                     }
                     renderChat()
                     askBtn.isEnabled = true

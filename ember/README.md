@@ -63,7 +63,7 @@ Or manually:
 
 On your home PC, forward UDP port **4433** and run `cargo run -p ember-server`. Enter your PC's IP (e.g. `192.168.1.100:4433`) in the app.
 
-**Real-time web search (Brave):** Add `--web-search` and set `BRAVE_API_KEY` to enable. Queries about weather, news, latest events, etc. will fetch current web context before inference. Add `--web-search-always` to include web data for *every* query (not just trigger-matched). Get a key at [api.search.brave.com](https://api.search.brave.com).
+**Real-time web search (Brave):** Add `--web-search --web-search-always` and set `BRAVE_API_KEY` (in `.env` or env) to enable. Every query fetches current web context before inference. Use `--brave-api-key KEY` to pass the key via CLI. Get a key at [api.search.brave.com](https://api.search.brave.com).
 
 ### Fine-tuning inference parameters
 

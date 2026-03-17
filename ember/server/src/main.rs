@@ -187,12 +187,20 @@ fn log_connection(log: &Option<Arc<std::sync::Mutex<std::fs::File>>>, remote: &S
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    dotenvy::dotenv().ok();
+    // Load .env from current dir, then from ember workspace (for cargo run from workspace root)
+    if dotenvy::dotenv().is_err() {
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            if let Some(ember_dir) = std::path::Path::new(&manifest_dir).parent() {
+                let _ = dotenvy::from_path(ember_dir.join(".env"));
+            }
+        }
+    }
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to install rustls crypto provider");
 
     let mut inference_addr = "https://127.0.0.1:50051".to_string();
+    let mut listen_port: u16 = 4433;
     let mut log_file: Option<String> = Some("ember-connections.log".to_string());
     let mut style_file = "server/chat-style.css".to_string();
     let mut params_file = "inference_params.json".to_string();
@@ -203,6 +211,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     while i < args.len() {
         if args[i] == "--inference" && i + 1 < args.len() {
             inference_addr = args[i + 1].clone();
+            i += 2;
+            continue;
+        }
+        if args[i] == "--port" && i + 1 < args.len() {
+            if let Ok(p) = args[i + 1].parse() {
+                listen_port = p;
+            }
             i += 2;
             continue;
         }
@@ -236,6 +251,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             i += 1;
             continue;
         }
+        if args[i] == "--brave-api-key" && i + 1 < args.len() {
+            std::env::set_var("BRAVE_API_KEY", &args[i + 1]);
+            i += 2;
+            continue;
+        }
         i += 1;
     }
 
@@ -255,7 +275,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     }
 
-    let listen_addr: SocketAddr = "0.0.0.0:4433".parse()?;
+    let listen_addr: SocketAddr = format!("0.0.0.0:{}", listen_port).parse()?;
     let proactive_queue: Arc<tokio::sync::Mutex<Vec<String>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let style_file = Arc::new(style_file);
     let params_file = Arc::new(params_file);
@@ -705,7 +725,7 @@ async fn brave_search(api_key: &str, query: &str, count: u32) -> String {
         let url = r.url.as_deref().unwrap_or("");
         log("BRAVE", &format!("  [{}] {} {}", i + 1, title, url));
     }
-    let mut ctx = String::from("\n\n[Current web context (use to answer questions about recent events, weather, news, etc.):\n");
+    let mut ctx = String::from("\n\n[IMPORTANT: You have been given live web search results below. You MUST use this information to answer the user's question. Do NOT say you cannot access real-time data or that your knowledge is outdated—use the web context provided.\n\nCurrent web context:\n");
     for (i, r) in results.iter().enumerate().take(count as usize) {
         let desc = r.description.as_deref().unwrap_or("").trim();
         if !desc.is_empty() {
@@ -833,16 +853,29 @@ async fn stream_inference(
     while let Some(result) = stream.next().await {
         match result {
             Ok(reply) => {
-                let token = reply.token;
-                if !token.is_empty() {
-                    total_len += token.len();
-                    let frame = stream_frame(json!({
-                        "type": "stream_token",
-                        "token": token,
-                        "interaction_id": interaction_id
-                    }));
-                    send.write_all(&frame).await?;
+                let mut token = reply.token;
+                // Strip ChatML special tokens (model may emit these; don't send to client)
+                for tag in ["<|im_end|>", "<|im_start|>", "<|end|>", "<|start|>"] {
+                    token = token.replace(tag, "");
                 }
+                // Also strip any <|...|> pattern (handles split tokens)
+                while let Some(start) = token.find("<|") {
+                    if let Some(end) = token[start..].find("|>") {
+                        token = format!("{}{}", &token[..start], &token[start + end + 2..]);
+                    } else {
+                        break;
+                    }
+                }
+                if token.is_empty() {
+                    continue;
+                }
+                total_len += token.len();
+                let frame = stream_frame(json!({
+                    "type": "stream_token",
+                    "token": token,
+                    "interaction_id": interaction_id
+                }));
+                send.write_all(&frame).await?;
             }
             Err(e) => return Err(format!("inference stream error: {e}").into()),
         }

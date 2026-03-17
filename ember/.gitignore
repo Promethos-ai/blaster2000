@@ -12,3 +12,4 @@ android/keystore.properties
 android/.gradle/
 android/app/build/
 client/android/
+nssm/

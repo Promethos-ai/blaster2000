@@ -1,1 +1,1 @@
-pinggy.exe -p 443 -R0:127.0.0.1:4433   WERxHARnICY^+udp@pro.pinggy.io
+pinggy.exe -p 443 -R0:127.0.0.1:8443   WERxHARnICY^+udp@pro.pinggy.io
