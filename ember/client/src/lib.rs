@@ -7,7 +7,17 @@ mod jni;
 mod ios;
 
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+
+/// Live-tuning: inference stream timeout (seconds). Default 120. Set via EmberClient.setInferenceTimeoutSec().
+static INFERENCE_TIMEOUT_SEC: AtomicU32 = AtomicU32::new(120);
+
+/// Set inference timeout (seconds). Used for live tuning from server push.
+#[cfg(feature = "android")]
+pub fn set_inference_timeout_sec(secs: u32) {
+    INFERENCE_TIMEOUT_SEC.store(secs, Ordering::Relaxed);
+}
 
 use quinn::{ClientConfig, Endpoint, TransportConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -247,9 +257,10 @@ where
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
     endpoint.set_default_client_config(client_config);
 
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+    let timeout_secs = INFERENCE_TIMEOUT_SEC.load(Ordering::Relaxed).max(10);
+    let timeout = std::time::Duration::from_secs(timeout_secs as u64);
     let connection = match tokio::time::timeout(
-        TIMEOUT,
+        timeout,
         endpoint.connect(server_addr, server_name)?,
     )
     .await
@@ -277,7 +288,7 @@ where
     send.finish()?;
 
     let result = parse_stream_response::<4096, _, _, _, _, _, _>(
-        &mut recv, TIMEOUT,
+        &mut recv, timeout,
         on_token, on_rich, on_style, on_layout, on_audio, on_control,
     ).await?;
 

@@ -4,6 +4,10 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 
 ## Changelog
 
+### v0.1.31
+- **Inference timeout live tuning** — Default 120s (was 60s). Server pushes `layout.inference_timeout_sec` on startup; tune via `--inference-timeout-sec` or `.\push-to-ember.ps1 -Payload '{"layout":{"inference_timeout_sec":180}}'`.
+- **Chat scroll** — Always show last response; scroll after load and streaming updates (double RAF for layout readiness).
+
 ### v0.1.30
 - **Splash screen** — On server connect, shows Promethos logo + "EMBER ASSISTANT", then fades to normal layout. Fade triggers on first push or first ask response.
 

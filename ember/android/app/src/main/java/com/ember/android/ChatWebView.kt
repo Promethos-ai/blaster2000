@@ -12,7 +12,7 @@ object ChatWebView {
     val DEFAULT_CSS = """
         * { box-sizing: border-box; }
         html { scroll-behavior: smooth; }
-        body { margin: 0; padding: 12px; padding-bottom: 24px; font-family: system-ui; -webkit-user-select: text; user-select: text; }
+        body { margin: 0; padding: 12px; padding-bottom: 80px; font-family: system-ui; color: #fff; background: #000; -webkit-user-select: text; user-select: text; }
         .message, .message.user, .message.ai { margin: 0 0 8px 0; padding: 0; border: none; border-radius: 0; background: none; white-space: pre-wrap; }
     """.trimIndent()
 
@@ -34,13 +34,13 @@ object ChatWebView {
             val content = contentToHtml(text)
             val escaped = escapeJs(content)
             webView.evaluateJavascript(
-                "try { var el = document.getElementById('streaming-msg'); if (el) el.innerHTML = $escaped; } catch(e) {}",
+                "try { var el = document.getElementById('streaming-msg'); if (el) { el.innerHTML = $escaped; requestAnimationFrame(function(){ requestAnimationFrame(function(){ window.scrollTo(0, document.body.scrollHeight); }); }); } } catch(e) {}",
                 null
             )
         } catch (_: Throwable) {
             val escaped = escapeJs(escapeHtml(text))
             webView.evaluateJavascript(
-                "try { var el = document.getElementById('streaming-msg'); if (el) el.textContent = $escaped; } catch(e) {}",
+                "try { var el = document.getElementById('streaming-msg'); if (el) { el.textContent = $escaped; requestAnimationFrame(function(){ requestAnimationFrame(function(){ window.scrollTo(0, document.body.scrollHeight); }); }); } } catch(e) {}",
                 null
             )
         }
@@ -59,7 +59,7 @@ object ChatWebView {
             sb.append(if (msg.isUser) escapeHtml(msg.text) else contentToHtml(msg.text))
             sb.append("</div>")
         }
-        sb.append("</div></body></html>")
+        sb.append("</div><script>(function(){var f=function(){window.scrollTo(0,document.body.scrollHeight);};if(document.readyState==='complete')setTimeout(f,50);else window.addEventListener('load',function(){setTimeout(f,50);});})();</script></body></html>")
         return sb.toString()
     }
 

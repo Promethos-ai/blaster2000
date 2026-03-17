@@ -7,6 +7,7 @@
 #   .\push-to-ember.ps1 "marquee"    # weather + gas marquee (uses last shared location)
 #   .\push-to-ember.ps1 "qr"        # clear screen, show QR code in rich area (scan to download)
 #   .\push-to-ember.ps1 "style"    # push server chat-style.css to app (reload ChatWebView styles at will)
+#   .\push-to-ember.ps1 "rich"     # push server rich-placeholder.html to app (reload rich area)
 #   .\push-to-ember.ps1 -Payload '{"chat":[{"text":"Hi","isUser":true},{"text":"Hello!","isUser":false}],"rich":"<div>Dashboard</div>"}'
 #   .\push-to-ember.ps1 -PayloadFile payload.json
 #
@@ -15,7 +16,7 @@
 #   chatCss: CSS string
 #   rich: HTML - rich content area
 #   richStyle: CSS for rich area
-#   layout: {rich_height: "full"|"auto"|"140", theme: "dark"|"light"}
+#   layout: {rich_height, theme, inference_timeout_sec} - inference_timeout_sec: live-tune response timeout (default 120)
 #   input: prefill prompt
 #   message: append as AI message
 #
@@ -55,6 +56,17 @@ if ($PayloadFile -ne "") {
         $toSend = '{"chatCss":"' + $escaped + '"}'
     } else {
         Write-Host "Style file not found: $stylePath" -ForegroundColor Red
+        exit 1
+    }
+} elseif ($Message -eq "rich") {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $richPath = Join-Path $scriptDir "server\rich-placeholder.html"
+    if (Test-Path $richPath) {
+        $html = Get-Content $richPath -Raw
+        $escaped = $html.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`n", '\n').Replace("`r", '\n')
+        $toSend = '{"rich":"' + $escaped + '"}'
+    } else {
+        Write-Host "Rich placeholder not found: $richPath" -ForegroundColor Red
         exit 1
     }
 } elseif ($Message -ne "") {

@@ -4,7 +4,7 @@ use std::panic;
 use std::sync::mpsc;
 
 use jni::objects::{JClass, JObject, JString, JValue};
-use jni::sys::jstring;
+use jni::sys::{jint, jstring};
 use jni::JNIEnv;
 
 enum StreamItem {
@@ -23,6 +23,17 @@ fn parse_addr(env: &mut JNIEnv, addr: &JString) -> Result<String, String> {
 
 fn parse_prompt(env: &mut JNIEnv, prompt: &JString) -> Result<String, String> {
     env.get_string(prompt).map(|s| s.into()).map_err(|e| format!("{}", e))
+}
+
+/// Set inference timeout (seconds). Live tuning from server push.
+/// Called from Kotlin: EmberClient.setInferenceTimeoutSec(seconds: Int)
+#[no_mangle]
+pub extern "system" fn Java_com_ember_android_EmberClient_setInferenceTimeoutSec(
+    _env: JNIEnv,
+    _class: JClass,
+    seconds: jint,
+) {
+    crate::set_inference_timeout_sec(seconds as u32);
 }
 
 /// Ask the AI a question via the ember server.

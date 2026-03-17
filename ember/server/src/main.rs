@@ -225,6 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut style_file = "server/chat-style.css".to_string();
     let mut params_file = "inference_params.json".to_string();
     let mut instructions_file: Option<String> = None;
+    let mut inference_timeout_sec: u32 = 120;
     let mut web_search = false;
     let mut web_search_always = false;
     let args: Vec<String> = std::env::args().collect();
@@ -271,6 +272,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         if args[i] == "--instructions-file" && i + 1 < args.len() {
             instructions_file = Some(args[i + 1].clone());
+            i += 2;
+            continue;
+        }
+        if args[i] == "--inference-timeout-sec" && i + 1 < args.len() {
+            if let Ok(n) = args[i + 1].parse::<u32>() {
+                inference_timeout_sec = n.max(10);
+            }
             i += 2;
             continue;
         }
@@ -321,7 +329,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     let web_search = Arc::new((web_search, web_search_always, brave_key));
     let instructions_file = instructions_file.map(Arc::new);
-    run(listen_addr, push_port, inference_addr, conn_log, proactive_queue.clone(), push_notify.clone(), last_coords.clone(), style_file, params_file, instructions_file, web_search)
+    run(listen_addr, push_port, inference_addr, conn_log, proactive_queue.clone(), push_notify.clone(), last_coords.clone(), style_file, params_file, instructions_file, inference_timeout_sec, web_search)
 }
 
 /// Load optional instructions from file. Returns empty string if file missing or unreadable.
@@ -603,6 +611,7 @@ async fn run(
     style_file: Arc<String>,
     params_file: Arc<String>,
     instructions_file: Option<Arc<String>>,
+    inference_timeout_sec: u32,
     web_search: Arc<(bool, bool, String)>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server_config = configure_server()?;
@@ -630,16 +639,19 @@ async fn run(
     spawn_push_listener(push_port, proactive_queue.clone(), push_notify.clone(), last_coords.clone());
     spawn_push_file_watcher(proactive_queue.clone(), push_notify.clone(), last_coords.clone());
 
-    // Force-reload stylesheet: push chatCss so any connected app gets latest styles on next poll
+    // Force-reload: push chatCss + rich + layout (inference_timeout_sec for live tuning)
     {
         let css = std::fs::read_to_string(style_file.as_str())
             .unwrap_or_else(|_| include_str!("../chat-style.css").to_string());
-        let payload = serde_json::json!({"chatCss": css}).to_string();
+        let rich = std::fs::read_to_string("server/rich-placeholder.html")
+            .unwrap_or_else(|_| include_str!("../rich-placeholder.html").to_string());
+        let layout = serde_json::json!({"inference_timeout_sec": inference_timeout_sec});
+        let payload = serde_json::json!({"chatCss": css, "rich": rich, "layout": layout}).to_string();
         let mut q = proactive_queue.lock().await;
         q.push(payload);
         drop(q);
         push_notify.notify_one();
-        log("SERVER", &format!("pushed chatCss ({} chars) for force-reload", css.len()));
+        log("SERVER", &format!("pushed chatCss + rich ({} chars) for force-reload", css.len() + rich.len()));
     }
 
     while let Some(incoming) = endpoint.accept().await {
@@ -1013,11 +1025,17 @@ fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weathe
     } else {
         (SYSTEM_PROMPT, user_msg)
     };
-    let mut system_with_web = if web_context.is_empty() {
-        system.to_string()
+    // Put stored rules (instructions.txt) FIRST so the model prioritizes them
+    let mut system_with_web = if extra_instructions.is_empty() {
+        String::new()
     } else {
-        format!("{system}{web_context}")
+        format!("{}\n\n", extra_instructions.trim())
     };
+    if web_context.is_empty() {
+        system_with_web.push_str(system);
+    } else {
+        system_with_web.push_str(&format!("{system}{web_context}"));
+    }
     if is_user_contextual {
         system_with_web.push_str(USER_CONTEXT_INSTRUCTION);
     }
@@ -1029,10 +1047,6 @@ fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weathe
     system_with_web.push_str(DYNAMIC_CONTROL_INSTRUCTION);
     system_with_web.push_str(CONTROL_PIPE_INSTRUCTION);
     system_with_web.push_str(NO_META_INSTRUCTION);
-    if !extra_instructions.is_empty() {
-        system_with_web.push_str("\n\n");
-        system_with_web.push_str(extra_instructions);
-    }
     format!(
         "<|im_start|>system\n{system_with_web}<|im_end|>\n<|im_start|>user\n{user_part}<|im_end|>\n<|im_start|>assistant\n"
     )
@@ -1560,6 +1574,7 @@ async fn stream_inference(
 
     let mut buf = String::new();
     let mut inside_block: Option<(&str, &str)> = None; // (open_tag, close_tag)
+    let mut inside_tag: bool = false; // inside partial <|...|>, skip until we see |>
     const BLOCKS: &[(&str, &str, &str)] = &[
         ("<ember_push>", "</ember_push>", "queue_push"),
         ("<ember_rich>", "</ember_rich>", "stream_rich"),
@@ -1573,6 +1588,12 @@ async fn stream_inference(
         match result {
             Ok(reply) => {
                 let mut token = reply.token;
+                if inside_tag {
+                    if token.contains("|>") {
+                        inside_tag = false;
+                    }
+                    continue;
+                }
                 for tag in ["<|im_end|>", "<|im_start|>", "<|end|>", "<|start|>", "<|thinking|>", "<|/thinking|>", "<|response|>", "<|/response|>", "<|system|>", "<|/system|>", "<|user|>", "<|/user|>", "<|assistant|>", "<|/assistant|>"] {
                     token = token.replace(tag, "");
                 }
@@ -1583,6 +1604,7 @@ async fn stream_inference(
                         token = format!("{}{}", &token[..start], &token[end..]);
                     } else {
                         token = token[..start].to_string();
+                        inside_tag = true;
                         break;
                     }
                 }

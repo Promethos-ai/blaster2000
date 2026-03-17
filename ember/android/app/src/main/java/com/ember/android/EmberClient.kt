@@ -5,6 +5,9 @@ object EmberClient {
         System.loadLibrary("ember_native")
     }
 
+    /** Live tuning: set inference stream timeout (seconds). Default 120. Applied on next request. */
+    external fun setInferenceTimeoutSec(seconds: Int)
+
     /** Request full response (blocks until complete). */
     external fun ask(serverAddr: String, prompt: String): String
 
@@ -23,7 +26,7 @@ object EmberClient {
 
     internal val DEFAULT_CHAT_CSS = """
         * { box-sizing: border-box; }
-        body { margin: 0; padding: 12px; font-family: system-ui; -webkit-user-select: text; user-select: text; }
+        body { margin: 0; padding: 12px; padding-bottom: 80px; font-family: system-ui; color: #fff; background: #000; -webkit-user-select: text; user-select: text; }
         .message, .message.user, .message.ai { margin: 0 0 8px 0; padding: 0; border: none; border-radius: 0; background: none; white-space: pre-wrap; }
     """.trimIndent()
 }

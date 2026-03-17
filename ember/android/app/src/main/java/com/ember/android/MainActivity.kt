@@ -326,6 +326,7 @@ class MainActivity : AppCompatActivity() {
         if (trimmed.equals("refresh", ignoreCase = true)) {
             renderChat()
             RichContentWebView.refresh(richContentWebView)
+            scrollToBottom()
             return
         }
         if (payload.startsWith("{")) {
@@ -433,7 +434,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scrollToBottom() {
-        chatWebView.evaluateJavascript("window.scrollTo(0, document.body.scrollHeight);", null)
+        chatWebView.evaluateJavascript(
+            "(function(){var f=function(){window.scrollTo(0,document.body.scrollHeight);};requestAnimationFrame(function(){requestAnimationFrame(f);});})();",
+            null
+        )
     }
 
     private fun showError(msg: String) {
@@ -549,10 +553,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Apply layout hints from AI (rich_height, theme). */
+    /** Apply layout hints from AI (rich_height, theme, inference_timeout_sec). */
     private fun applyLayout(json: String) {
         try {
             val obj = org.json.JSONObject(json.trim())
+            val timeoutSec = obj.optInt("inference_timeout_sec", 0)
+            if (timeoutSec > 0) EmberClient.setInferenceTimeoutSec(timeoutSec)
             val richHeight = obj.optString("rich_height", "140")
             val lp = richContentContainer.layoutParams ?: return
             val heightPx = when (richHeight) {
