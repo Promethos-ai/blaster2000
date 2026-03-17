@@ -4,6 +4,12 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 
 ## Changelog
 
+### v0.1.29
+- **Error sound** — On error, app plays a gentle tone instead of speaking error text.
+- **Chat styles server-side** — `.\push-to-ember.ps1 "style"` pushes chat-style.css; server force-reloads styles on startup.
+- **Plain chat** — Conversation elements: no rounded corners, plain solid text.
+- **Rich area** — DRIVING MODE label; QR asset on left.
+
 ### v0.1.28
 - **Rich area QR** — QR code (promqr.png) bundled as asset; shown on left of placeholder when empty. Scan to download APK.
 - **Chat bubbles** — Rounded corners on each question/answer (`width: fit-content`, `overflow: hidden`).
@@ -156,6 +162,9 @@ The server exposes a TCP push channel (default port **4434**) so external proces
 
 # Marquee: weather + gas prices for last shared location (Open-Meteo + NREL)
 .\push-to-ember.ps1 "marquee"
+
+# Reload ChatWebView styles from server (server/chat-style.css) — edit CSS, push, app updates at will
+.\push-to-ember.ps1 "style"
 
 # Refresh DOM (re-render chat + rich WebViews; fixes layout glitches)
 .\push-to-ember.ps1 "refresh"

@@ -630,6 +630,18 @@ async fn run(
     spawn_push_listener(push_port, proactive_queue.clone(), push_notify.clone(), last_coords.clone());
     spawn_push_file_watcher(proactive_queue.clone(), push_notify.clone(), last_coords.clone());
 
+    // Force-reload stylesheet: push chatCss so any connected app gets latest styles on next poll
+    {
+        let css = std::fs::read_to_string(style_file.as_str())
+            .unwrap_or_else(|_| include_str!("../chat-style.css").to_string());
+        let payload = serde_json::json!({"chatCss": css}).to_string();
+        let mut q = proactive_queue.lock().await;
+        q.push(payload);
+        drop(q);
+        push_notify.notify_one();
+        log("SERVER", &format!("pushed chatCss ({} chars) for force-reload", css.len()));
+    }
+
     while let Some(incoming) = endpoint.accept().await {
         let client_opt = grpc_client.clone();
         let addr = inference_addr.clone();

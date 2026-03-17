@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Intent
 import android.location.Location
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
 import androidx.appcompat.app.AlertDialog
@@ -346,7 +348,11 @@ class MainActivity : AppCompatActivity() {
                     val msg = obj.getString("message")
                     if (msg.isNotBlank()) {
                         chatMessages.add(ChatMessage(msg, isUser = false))
-                        if (isSpeakEnabled()) tts?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, null)
+                        if (msg.startsWith("Error:", ignoreCase = true)) {
+                            playErrorSound()
+                        } else if (isSpeakEnabled()) {
+                            tts?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, null)
+                        }
                     }
                 }
                 if (obj.optBoolean("refresh", false)) {
@@ -357,12 +363,17 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "applyPushPayload parse error", e)
                 showError(e.message ?: getString(R.string.error_generic))
+                playErrorSound()
             }
         } else {
             chatMessages.add(ChatMessage(payload, isUser = false))
             renderChat()
             scrollToBottom()
-            if (isSpeakEnabled()) tts?.speak(payload, TextToSpeech.QUEUE_FLUSH, null, null)
+            if (payload.startsWith("Error:", ignoreCase = true)) {
+                playErrorSound()
+            } else if (isSpeakEnabled()) {
+                tts?.speak(payload, TextToSpeech.QUEUE_FLUSH, null, null)
+            }
         }
     }
 
@@ -409,6 +420,15 @@ class MainActivity : AppCompatActivity() {
     private fun showError(msg: String) {
         errorText.text = msg
         errorText.visibility = View.VISIBLE
+    }
+
+    /** Play a light, pleasing tone instead of speaking error text. */
+    private fun playErrorSound() {
+        try {
+            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 40)
+            tg.startTone(ToneGenerator.TONE_PROP_ACK, 200)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tg.release() }, 300)
+        } catch (_: Exception) {}
     }
 
     private fun hideError() {
@@ -670,6 +690,7 @@ class MainActivity : AppCompatActivity() {
                             val displayResult = result.removePrefix("Error: ").trim()
                             showError(displayResult)
                             chatMessages.removeAt(last)
+                            playErrorSound()
                             if (result.contains("warming up") || result.contains("still loading")) {
                                 Toast.makeText(this@MainActivity, getString(R.string.error_model_loading), Toast.LENGTH_LONG).show()
                             }

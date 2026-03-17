@@ -12,11 +12,8 @@ object ChatWebView {
     val DEFAULT_CSS = """
         * { box-sizing: border-box; }
         html { scroll-behavior: smooth; }
-        body { margin: 0; padding: 12px; padding-bottom: 24px; font-family: system-ui; font-size: 13px; color: #fff; background: #000; -webkit-user-select: text; user-select: text; }
-        .chat { width: 100%; max-width: 100%; }
-        .message { display: block; width: fit-content; max-width: 85%; margin-bottom: 10px; padding: 10px 14px; border-radius: 9999px; word-wrap: break-word; white-space: pre-wrap; font-size: 13px; overflow: hidden; }
-        .message.user { margin-left: auto; margin-right: 0; background: #238636; color: #fff; text-align: right; }
-        .message.ai { margin-left: 0; margin-right: auto; background: #000; color: #fff; border: 1px solid #333; }
+        body { margin: 0; padding: 12px; padding-bottom: 24px; font-family: system-ui; -webkit-user-select: text; user-select: text; }
+        .message, .message.user, .message.ai { margin: 0 0 8px 0; padding: 0; border: none; border-radius: 0; background: none; white-space: pre-wrap; }
     """.trimIndent()
 
     fun configure(webView: WebView) {

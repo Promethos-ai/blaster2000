@@ -19,8 +19,8 @@ android {
         applicationId = "com.ember.android"
         minSdk = 24
         targetSdk = 34
-        versionCode = 28
-        versionName = "0.1.28"
+        versionCode = 29
+        versionName = "0.1.29"
     }
 
     signingConfigs {

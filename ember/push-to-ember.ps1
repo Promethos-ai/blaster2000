@@ -6,6 +6,7 @@
 #   .\push-to-ember.ps1 "app clear"   # reinitialize display (clear chat, rich content, error)
 #   .\push-to-ember.ps1 "marquee"    # weather + gas marquee (uses last shared location)
 #   .\push-to-ember.ps1 "qr"        # clear screen, show QR code in rich area (scan to download)
+#   .\push-to-ember.ps1 "style"    # push server chat-style.css to app (reload ChatWebView styles at will)
 #   .\push-to-ember.ps1 -Payload '{"chat":[{"text":"Hi","isUser":true},{"text":"Hello!","isUser":false}],"rich":"<div>Dashboard</div>"}'
 #   .\push-to-ember.ps1 -PayloadFile payload.json
 #
@@ -41,10 +42,21 @@ if ($PayloadFile -ne "") {
 } elseif ($Payload -ne "") {
     $toSend = $Payload
 } elseif ($Message -eq "qr") {
-    $url = if ($QrUrl) { $QrUrl } else { "https://github.com/Promethos-ai/blaster2000/releases/download/ember-v0.1.28/promqr.png" }
+    $url = if ($QrUrl) { $QrUrl } else { "https://github.com/Promethos-ai/blaster2000/releases/download/ember-v0.1.29/promqr.png" }
     $richHtml = "<div class=""rich-card"" style=""text-align:center;padding:24px""><img src=""$url"" style=""max-width:100%;max-height:400px;"" alt=""Scan to download"" /></div>"
     $escaped = $richHtml.Replace('\', '\\').Replace('"', '\"')
     $toSend = '{"chat":[],"rich":"' + $escaped + '"}'
+} elseif ($Message -eq "style") {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $stylePath = Join-Path $scriptDir "server\chat-style.css"
+    if (Test-Path $stylePath) {
+        $css = Get-Content $stylePath -Raw
+        $escaped = $css.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`n", '\n').Replace("`r", '\n')
+        $toSend = '{"chatCss":"' + $escaped + '"}'
+    } else {
+        Write-Host "Style file not found: $stylePath" -ForegroundColor Red
+        exit 1
+    }
 } elseif ($Message -ne "") {
     $toSend = $Message
 }

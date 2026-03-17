@@ -93,6 +93,7 @@ object RichContentWebView {
                 <p style="margin:0 0 4px 0;color:#e6edf3;font-weight:500;">Rich content area</p>
                 <p style="margin:0;color:#8b949e;font-size:12px;">Weather, cards, and more appear here.</p>
             </div>
+            <span style="font-size:28px;font-weight:bold;color:#fff;letter-spacing:0.08em;">DRIVING MODE</span>
         </div>
     """.trimIndent()
 
