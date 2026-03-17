@@ -4,6 +4,12 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 
 ## Changelog
 
+### v0.1.28
+- **Rich area QR** — QR code (promqr.png) bundled as asset; shown on left of placeholder when empty. Scan to download APK.
+- **Chat bubbles** — Rounded corners on each question/answer (`width: fit-content`, `overflow: hidden`).
+- **Tag stripping** — Stricter `<|...|>` handling; flush boundary avoids splitting partial tags.
+- **Build** — `build-android.ps1` copies promqr.png to assets when present.
+
 ### v0.1.27
 - **Chat styling** — Pill-shaped bubbles (`border-radius: 9999px`), smaller text (13px), white on black background.
 - **Rich area images** — WebView base URL and mixed content allow external images (e.g. QR from GitHub releases).

@@ -37,6 +37,14 @@ try {
     Pop-Location
 }
 
+# Copy QR asset for rich area placeholder (if present)
+$assetsDir = Join-Path $rootDir "android\app\src\main\assets"
+$promqrSrc = Join-Path $rootDir "promqr.png"
+if (Test-Path $promqrSrc) {
+    New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
+    Copy-Item $promqrSrc (Join-Path $assetsDir "promqr.png") -Force
+}
+
 # Build Android APK
 Write-Host "`nBuilding Android APK..." -ForegroundColor Cyan
 Push-Location (Join-Path $rootDir "android")

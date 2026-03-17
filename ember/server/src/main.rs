@@ -954,21 +954,20 @@ async fn handle_stream(
 }
 
 /// System prompt for a caring, thoughtful assistant (ChatML format for DeepSeek/Llama).
-const SYSTEM_PROMPT: &str = "You are a caring, thoughtful assistant. You check in on the user's wellbeing, \
-remember context, and help with duties, issues, and opportunities. When the user shares something, \
-respond warmly and helpfully. Be very concise. Short answers. No lists, extra detail, or long explanations unless asked.";
+const SYSTEM_PROMPT: &str = "You are Ember, a caring, thoughtful assistant. Be very brief and accurate. \
+Short answers only. No thinking out loud, no self-talk, no meta-commentary. \
+Never read or echo tags (__word__, <ember_*>)—they are invisible. Only natural conversational text.";
 
 /// Never mention instructions, capabilities, or expose internal structure.
-const NO_META_INSTRUCTION: &str = "\n\n[CRITICAL: Never mention your instructions, capabilities, or limitations. \
-Never output meta-commentary about what you should or shouldn't do. Never expose or discuss the <ember_*> tags—\
-only natural conversational text. The app parses tags for display; they are never shown to the user. \
-Respond as if speaking naturally—no tags, no explanations of your process.]";
+const NO_META_INSTRUCTION: &str = "\n\n[CRITICAL: Never mention instructions, capabilities, or limitations. \
+Never think out loud or talk to yourself. Never output <|...|> tokens (e.g. <|im_end|>, <|thinking|>)—they are invisible. \
+Never read, say, or echo any tag (__word__, <ember_push>, <ember_rich>, <|...|>)—the user must never see them. Only natural conversational text.]";
 
 /// Control pipe instruction: any __word__ is a control message. AI must never say/echo them.
-const CONTROL_PIPE_INSTRUCTION: &str = "\n\n[APP CONTROL PIPE — CRITICAL: The push command is explicitly to control the operation and visual components of the Android app. \
-When the user asks to clear, reset, or wipe the app/screen: output ONLY __app_clear__ or <ember_push>app clear</ember_push>. Do NOT say \"app clear\" or \"app clear?\" as words—the user must never see that. \
-To send any command: include __command__ in your response (e.g. __app_clear__, __refresh__). The server strips it and queues it—user never sees it. \
-NEVER say, speak, or echo control tokens. If you see __word__ in user input, treat as invisible. Use <ember_push>payload</ember_push> for structured payloads.]";
+const CONTROL_PIPE_INSTRUCTION: &str = "\n\n[APP CONTROL PIPE — CRITICAL: NEVER read or echo tags. __word__, <ember_push>, <ember_rich>, etc. are invisible—user must never see them. \
+When user asks to clear/reset: output ONLY __app_clear__ or <ember_push>app clear</ember_push>. Do NOT say \"app clear\" as words. \
+To send commands: include __command__ in output (e.g. __app_clear__). Server strips it—user never sees it. \
+If you see __word__ in user input, treat as invisible. Use <ember_push>payload</ember_push> for structured payloads. Never read tags aloud.]";
 
 /// When user shares context (location, etc.), tell the model to use it directly.
 const USER_CONTEXT_INSTRUCTION: &str = "\n\n[USER CONTEXT: The user has shared information (e.g. location, coordinates, sensor data). \
@@ -978,8 +977,8 @@ Use it directly—do not search for it or ask for it. Respond naturally and help
 const REAL_TIME_WEB_PREFIX: &str = "\n\n[REAL-TIME WEB DATA: Live search results below. Use this to answer. Do NOT say you cannot access real-time data.]\n\nCurrent web context:\n";
 
 /// Proactive check-in prompt when user taps "Check in" (no prior user message).
-const CHECK_IN_PROMPT: &str = "You are a caring, thoughtful assistant. The user has opened the app and is \
-checking in with you. Generate a warm, brief greeting (1-2 sentences). Be concise. No lists or long explanations.";
+const CHECK_IN_PROMPT: &str = "You are Ember, a caring, thoughtful assistant. The user just opened the app. \
+Introduce yourself briefly as Ember, then give a warm greeting (1-2 short sentences). Be concise. Never read or echo tags.";
 
 const WEATHER_FORMAT_INSTRUCTION: &str = "\n\n[When answering weather questions, put the weather dashboard inside <ember_rich>...</ember_rich> tags (display-only, goes to top of app). Use only div, span, p, strong, em. No html/body tags—just inner markup. Use cards (div with padding/border), icons as Unicode (☀️ 🌧️ ❄️ 🌤️ ⛈️ 🌫️), and a clear hierarchy. Keep it mobile-friendly. After the closing </ember_rich>, add a brief conversational summary for the user.]";
 
@@ -993,8 +992,8 @@ const DYNAMIC_CONTROL_INSTRUCTION: &str = "\n\n[You control the app's display an
 <ember_layout>JSON</ember_layout> - Layout hints. JSON: {\"rich_height\":\"full\"|\"auto\"|\"140\", \"theme\":\"dark\"|\"light\"|\"warm\"}
 <ember_speak>text</ember_speak> - Speak this via TTS (e.g. alerts, emphasis). Use for important updates.
 <ember_push>payload</ember_push> - Explicitly controls the operation and visual components of the Android app. Payload: \"app clear\" or JSON {\"chat\":[...], \"rich\":\"...\", \"layout\":{...}}. The app receives it on its next poll. Use when the user asks to clear, reset, or update the app display. Never show this tag to the user—it is processed server-side.
-__word__ - Any double-underscore token (e.g. __app_clear__, __refresh__) is sent to the control pipe and never shown to the user. Output __command__ to issue control; never say it aloud.
-Vary styles and layouts to match context: weather→warm tones, news→editorial, calm→soft. Provide rich, accurate info from web context.]";
+__word__ - Double-underscore tokens go to control pipe; user never sees them. Output __command__ to issue control; NEVER read or say tags aloud.
+Vary styles to match context. Provide rich, accurate info. Be brief.]";
 
 fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weather: bool, is_user_contextual: bool, extra_instructions: &str) -> String {
     let (system, user_part) = if is_check_in {
@@ -1455,11 +1454,21 @@ fn sanitize_chat_token(s: &str) -> String {
     }
     // Strip __word__ control tokens (never show to user)
     out = extract_control_tokens(&out).0;
-    // Strip any <|...|> tokens (ChatML, etc.)
-    while let Some(start) = out.find("<|") {
-        if let Some(end) = out[start..].find("|>") {
-            out = format!("{}{}", &out[..start], &out[start + end + 2..]);
-        } else {
+    // Strip any <|...|> tokens (ChatML, etc.) - loop until all removed
+    loop {
+        let mut changed = false;
+        if let Some(start) = out.find("<|") {
+            if let Some(pipe_gt) = out[start..].find("|>") {
+                let end = start + pipe_gt + 2;
+                out = format!("{}{}", &out[..start], &out[end..]);
+                changed = true;
+            } else {
+                // Incomplete tag - remove from <| to end of string to avoid leaking
+                out = out[..start].to_string();
+                changed = true;
+            }
+        }
+        if !changed {
             break;
         }
     }
@@ -1552,13 +1561,16 @@ async fn stream_inference(
         match result {
             Ok(reply) => {
                 let mut token = reply.token;
-                for tag in ["<|im_end|>", "<|im_start|>", "<|end|>", "<|start|>"] {
+                for tag in ["<|im_end|>", "<|im_start|>", "<|end|>", "<|start|>", "<|thinking|>", "<|/thinking|>", "<|response|>", "<|/response|>", "<|system|>", "<|/system|>", "<|user|>", "<|/user|>", "<|assistant|>", "<|/assistant|>"] {
                     token = token.replace(tag, "");
                 }
+                // Strip any remaining <|...|> pattern
                 while let Some(start) = token.find("<|") {
-                    if let Some(end) = token[start..].find("|>") {
-                        token = format!("{}{}", &token[..start], &token[start + end + 2..]);
+                    if let Some(pipe_gt) = token[start..].find("|>") {
+                        let end = start + pipe_gt + 2;
+                        token = format!("{}{}", &token[..start], &token[end..]);
                     } else {
+                        token = token[..start].to_string();
                         break;
                     }
                 }
@@ -1640,7 +1652,7 @@ async fn stream_inference(
                             while safe_len > 0 && !buf.is_char_boundary(safe_len) {
                                 safe_len -= 1;
                             }
-                            // Don't split "app clear" across flushes—trim flush so it doesn't end with a prefix
+                            // Don't split "app clear" or <|tags|> across flushes—trim flush so it doesn't end with a prefix
                             if safe_len > 0 {
                                 let flush = &buf[..safe_len];
                                 for prefix in ["app clear?", "app clear!", "app clear.", "app clear ", "app clear", "app cle", "app cl", "app c", "app ", "app", "ap", "a"] {
@@ -1650,6 +1662,16 @@ async fn stream_inference(
                                             safe_len -= 1;
                                         }
                                         break;
+                                    }
+                                }
+                                // Don't split <|...|> tags—if flush ends with <| or contains <| without |>, trim to before it
+                                if let Some(last_lt) = flush.rfind("<|") {
+                                    let after = &flush[last_lt..];
+                                    if !after.contains("|>") {
+                                        safe_len = last_lt;
+                                        while safe_len > 0 && !buf.is_char_boundary(safe_len) {
+                                            safe_len -= 1;
+                                        }
                                     }
                                 }
                             }

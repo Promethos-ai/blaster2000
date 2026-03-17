@@ -26,12 +26,14 @@ object RichContentWebView {
         webView.setBackgroundColor(0)
     }
 
+    /** Base URL for rich content. file:///android_asset/ lets local assets (e.g. promqr.png) load. */
+    private const val BASE_URL = "file:///android_asset/"
+
     /** Update content with HTML. Safe to call from any thread; run on UI for visibility. */
     fun updateContent(webView: WebView, container: View?, html: String) {
         webView.post {
             val wrapped = wrapHtml(html, webView.context)
-            // Use HTTPS base URL so external images (e.g. GitHub release assets) load
-            webView.loadDataWithBaseURL("https://github.com/", wrapped, "text/html", "UTF-8", null)
+            webView.loadDataWithBaseURL(BASE_URL, wrapped, "text/html", "UTF-8", null)
             container?.visibility = View.VISIBLE
         }
     }
@@ -57,10 +59,10 @@ object RichContentWebView {
         webView.post { webView.reload() }
     }
 
-    /** Clear content and show Promethos logo placeholder. */
+    /** Clear content and show QR + placeholder. */
     fun clear(webView: WebView, container: View?) {
         webView.post {
-            webView.loadDataWithBaseURL("https://github.com/", wrapHtml("", webView.context), "text/html", "UTF-8", null)
+            webView.loadDataWithBaseURL(BASE_URL, wrapHtml("", webView.context), "text/html", "UTF-8", null)
             container?.visibility = View.VISIBLE
         }
     }
@@ -84,16 +86,19 @@ object RichContentWebView {
         }
     }
 
-    private fun logoPlaceholder(context: android.content.Context): String {
-        val base = "android.resource://${context.packageName}/drawable/splash_promethous"
-        return """<div class="rich-card" style="text-align:center;padding:16px;"><img src="$base" style="max-width:24px;max-height:24px;opacity:0.7;" /></div>"""
-    }
+    private val TEST_PLACEHOLDER_HTML = """
+        <div class="rich-card" style="display:flex;align-items:center;gap:12px;">
+            <img src="promqr.png" style="width:64px;height:64px;flex-shrink:0;" alt="Scan to download" />
+            <div>
+                <p style="margin:0 0 4px 0;color:#e6edf3;font-weight:500;">Rich content area</p>
+                <p style="margin:0;color:#8b949e;font-size:12px;">Weather, cards, and more appear here.</p>
+            </div>
+        </div>
+    """.trimIndent()
 
     private fun wrapHtml(bodyContent: String, context: android.content.Context? = null): String {
         if (bodyContent.isBlank()) {
-            val placeholder = context?.let { logoPlaceholder(it) }
-                ?: """<div class="rich-card" style="text-align:center;padding:16px;opacity:0.6;"></div>"""
-            return """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>$BASE_CSS</style></head><body>$placeholder</body></html>"""
+            return """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>$BASE_CSS</style></head><body>$TEST_PLACEHOLDER_HTML</body></html>"""
         }
         val sanitized = bodyContent
             .replace(Regex("<script[^>]*>", RegexOption.IGNORE_CASE), "<!--")
