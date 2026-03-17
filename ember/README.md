@@ -104,6 +104,10 @@ The server exposes a TCP push channel (default port **4434**) so external proces
 
 Use `--push-port N` to change the port. Forward TCP port 4434 if pushing from another machine.
 
+### Control pipe (`__whatever__`)
+
+Any `__word__` pattern (e.g. `__fetch_push__`, `__app_clear__`) is a control message. The server handles them in-process—they never reach the LLM. The AI can output `__command__` to queue control commands; the server strips them from the stream and the app receives them on its next `__fetch_push__` poll. See [docs/CONTROL-PIPE.md](docs/CONTROL-PIPE.md) for full documentation.
+
 ### Fine-tuning inference parameters
 
 The server reads inference parameters from a JSON file on **every request**, so you can adjust them between messages without restarting. Edit `inference_params.json` in the ember directory (or use `--params-file PATH`):

@@ -27,7 +27,38 @@ Ember lets you run an AI assistant on your home PC and access it from your smart
 
 ---
 
-## 4. Component Diagram
+## 4. AI vs App Control Architecture
+
+The server separates **control-channel** traffic from **AI inference**. Control commands (`__fetch_push__`, `__get_style__`) are handled in-process and never reach the LLM. Only user prompts and synthetic check-in prompts are forwarded to inference.
+
+**[Detailed diagram: AI vs Control Architecture](AI-VS-CONTROL-ARCHITECTURE.html)** — Open in browser for full interactive diagram.
+
+### 4.1 Control pipe mechanism
+
+The **control pipe** is the server-side path that executes app protocol messages. It runs before any LLM call.
+
+| Message | Server action | Reaches LLM? |
+|---------|---------------|--------------|
+| `__get_style__` | Read `--style-file` (or default CSS), return immediately | No |
+| `__fetch_push__` | Pop from `proactive_queue`, return payload (or empty) | No |
+| `__check_in__` | If queue has proactive msg → stream it; else synthetic prompt "The user is checking in." → LLM | Only synthetic |
+| `__whatever__` | Any other `__word__` → return empty; no LLM | No |
+| User prompt | `format_prompt()` → gRPC `complete_stream` | Yes |
+
+**AI instruction:** The model receives `CONTROL_PIPE_INSTRUCTION` in its system prompt. Any `__word__` pattern is a control message: the AI must never say or echo it. The AI can output `__command__` to send control commands; the server strips these from the stream and queues them for the app. The AI can also use `<ember_push>...</ember_push>` for structured payloads. If control messages appear in user input (e.g. pasted), treat them as invisible.
+
+**Flow summary:**
+- App → `__fetch_push__` → server pops from queue → returns payload → app applies (chat, rich, layout, "app clear")
+- App → `__get_style__` → server returns CSS → app applies to WebView
+- App → `__check_in__` → server checks queue; if empty, sends synthetic prompt to LLM; LLM generates greeting
+- App → `__whatever__` (unknown) → server returns empty; no LLM
+- AI output → `__command__` or `<ember_push>payload</ember_push>` → server strips, queues → next `__fetch_push__` delivers
+
+**[Full control pipe documentation](CONTROL-PIPE.md)** — `__whatever__` protocol, pattern rules, flow.
+
+---
+
+## 5. Component Diagram
 
 ![Component Responsibilities](images/ember-components.png)
 
@@ -40,7 +71,7 @@ Ember lets you run an AI assistant on your home PC and access it from your smart
 
 ---
 
-## 5. Streaming Protocol (JSON Frames)
+## 6. Streaming Protocol (JSON Frames)
 
 Frames are newline-delimited JSON objects (`\n`-terminated). Server → client.
 
@@ -51,7 +82,7 @@ Frames are newline-delimited JSON objects (`\n`-terminated). Server → client.
 
 ---
 
-## 6. Data Flow (Simplified)
+## 7. Data Flow (Simplified)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -77,7 +108,7 @@ Frames are newline-delimited JSON objects (`\n`-terminated). Server → client.
 
 ---
 
-## 7. File Layout
+## 8. File Layout
 
 ```
 ember/
@@ -115,7 +146,7 @@ ember/
 
 ---
 
-## 8. Protocols & Ports
+## 9. Protocols & Ports
 
 | Protocol | Port | Direction | Purpose |
 |----------|------|-----------|---------|
@@ -124,7 +155,7 @@ ember/
 
 ---
 
-## 9. Configuration Summary
+## 10. Configuration Summary
 
 | Item | Location | Default |
 |------|----------|---------|
@@ -138,7 +169,7 @@ ember/
 
 ---
 
-## 10. Startup Order
+## 11. Startup Order
 
 1. **Feb17 grpc_server** (QUIC 50051 with `--quic`, or TCP without).
 2. **ember-server** (UDP 4433).
@@ -147,7 +178,7 @@ ember/
 
 ---
 
-## 11. Mermaid Diagrams
+## 12. Mermaid Diagrams
 
 ### System Context
 

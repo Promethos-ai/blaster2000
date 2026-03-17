@@ -182,15 +182,7 @@ class MainActivity : AppCompatActivity() {
         Log.i(DIAG, "MainActivity - ChatWebView.configure")
         ChatWebView.configure(chatWebView)
         RichContentWebView.configure(richContentWebView)
-        savedInstanceState?.getStringArray(KEY_CHAT_TEXTS)?.let { texts ->
-            savedInstanceState.getBooleanArray(KEY_CHAT_IS_USER)?.let { isUser ->
-                if (texts.size == isUser.size) {
-                    chatMessages.clear()
-                    chatMessages.addAll(texts.indices.map { i -> ChatMessage(texts[i], isUser[i]) })
-                }
-            }
-        }
-        renderChat()
+        reinitializeDisplay()
 
         micBtn.setOnClickListener {
             when {

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ember: AI vs App Control Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a1f26;
+      --border: #2d3748;
+      --control: #38bdf8;
+      --ai: #a78bfa;
+      --user: #34d399;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+      line-height: 1.5;
+    }
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-bottom: 2rem;
+    }
+    .diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+      overflow-x: auto;
+    }
+    svg {
+      display: block;
+      margin: 0 auto;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+    }
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+    .legend-dot.control { background: var(--control); }
+    .legend-dot.ai { background: var(--ai); }
+    .legend-dot.user { background: var(--user); }
+    .legend-dot.blocked { background: #64748b; }
+    .section {
+      margin-top: 2rem;
+    }
+    .section h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      color: var(--control);
+    }
+    .section ul {
+      list-style: none;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .section li {
+      padding: 0.25rem 0;
+      padding-left: 1.25rem;
+      position: relative;
+    }
+    .section li::before {
+      content: '→';
+      position: absolute;
+      left: 0;
+      color: var(--border);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8em;
+      background: rgba(0,0,0,0.3);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ember: AI vs App Control Architecture</h1>
+  <p class="subtitle">How the server separates control-channel traffic from AI inference—the LLM never sees control commands.</p>
+
+  <div class="diagram">
+    <svg width="900" height="620" viewBox="0 0 900 620" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="controlGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" style="stop-color:#38bdf8;stop-opacity:0.3" />
+          <stop offset="100%" style="stop-color:#38bdf8;stop-opacity:0.05" />
+        </linearGradient>
+        <linearGradient id="aiGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" style="stop-color:#a78bfa;stop-opacity:0.3" />
+          <stop offset="100%" style="stop-color:#a78bfa;stop-opacity:0.05" />
+        </linearGradient>
+        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+        </marker>
+      </defs>
+
+      <!-- Android App -->
+      <rect x="20" y="20" width="140" height="100" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="2"/>
+      <text x="90" y="50" text-anchor="middle" font-family="DM Sans" font-weight="600" font-size="14">Android App</text>
+      <text x="90" y="72" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#94a3b8">User prompts</text>
+      <text x="90" y="88" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#94a3b8">__fetch_push__</text>
+      <text x="90" y="104" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#94a3b8">__get_style__</text>
+
+      <!-- QUIC pipe (all traffic) -->
+      <line x1="160" y1="70" x2="220" y2="70" stroke="#64748b" stroke-width="2" stroke-dasharray="4 4"/>
+      <text x="190" y="62" text-anchor="middle" font-size="10" fill="#64748b">QUIC :4433</text>
+      <text x="190" y="85" text-anchor="middle" font-size="9" fill="#475569">all messages</text>
+
+      <!-- Ember Server - Router -->
+      <rect x="220" y="20" width="280" height="180" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+      <rect x="220" y="20" width="280" height="32" rx="8" fill="#334155"/>
+      <text x="360" y="42" text-anchor="middle" font-family="DM Sans" font-weight="600" font-size="14">Ember Server (Router)</text>
+
+      <!-- Control path (left side) -->
+      <rect x="235" y="60" width="125" height="130" rx="6" fill="url(#controlGrad)" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="297" y="82" text-anchor="middle" font-weight="600" font-size="12" fill="#38bdf8">CONTROL CHANNEL</text>
+      <text x="297" y="102" text-anchor="middle" font-size="10" fill="#94a3b8">No LLM call</text>
+      <line x1="250" y1="115" x2="345" y2="115" stroke="#334155" stroke-width="1"/>
+      <text x="297" y="132" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#38bdf8">__fetch_push__</text>
+      <text x="297" y="148" text-anchor="middle" font-size="9" fill="#64748b">→ proactive_queue.pop()</text>
+      <text x="297" y="165" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#38bdf8">__get_style__</text>
+      <text x="297" y="181" text-anchor="middle" font-size="9" fill="#64748b">→ chat-style.css</text>
+
+      <!-- Divider -->
+      <line x1="360" y1="60" x2="360" y2="200" stroke="#334155" stroke-width="1"/>
+
+      <!-- AI path (right side) -->
+      <rect x="365" y="60" width="125" height="130" rx="6" fill="url(#aiGrad)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="427" y="82" text-anchor="middle" font-weight="600" font-size="12" fill="#a78bfa">AI CHANNEL</text>
+      <text x="427" y="102" text-anchor="middle" font-size="10" fill="#94a3b8">→ LLM inference</text>
+      <line x1="380" y1="115" x2="475" y2="115" stroke="#334155" stroke-width="1"/>
+      <text x="427" y="135" text-anchor="middle" font-size="10" fill="#e2e8f0">User prompts</text>
+      <text x="427" y="152" text-anchor="middle" font-size="10" fill="#e2e8f0">__check_in__</text>
+      <text x="427" y="169" text-anchor="middle" font-size="9" fill="#64748b">format_prompt()</text>
+      <text x="427" y="185" text-anchor="middle" font-size="9" fill="#64748b">→ gRPC stream</text>
+
+      <!-- Arrow: control blocks LLM -->
+      <path d="M 360 140 L 360 260" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="6 4" fill="none"/>
+      <text x="375" y="205" font-size="9" fill="#ef4444">BLOCKED</text>
+      <text x="375" y="218" font-size="8" fill="#64748b">control never</text>
+      <text x="375" y="230" font-size="8" fill="#64748b">reaches LLM</text>
+
+      <!-- Push channel (external) -->
+      <rect x="20" y="280" width="140" height="70" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="90" y="305" text-anchor="middle" font-weight="600" font-size="12">Push Channel</text>
+      <text x="90" y="325" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">TCP :4434</text>
+      <text x="90" y="342" text-anchor="middle" font-size="9" fill="#64748b">push-to-ember.ps1</text>
+      <line x1="90" y1="350" x2="220" y2="350" stroke="#38bdf8" stroke-width="2"/>
+      <text x="155" y="342" text-anchor="middle" font-size="9" fill="#38bdf8">enqueue</text>
+      <line x1="220" y1="350" x2="220" y2="200" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="4 4"/>
+      <text x="205" y="280" font-size="8" fill="#38bdf8">proactive_queue</text>
+
+      <!-- gRPC / Feb17 -->
+      <rect x="520" y="80" width="160" height="80" rx="8" fill="#1e293b" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="600" y="108" text-anchor="middle" font-weight="600" font-size="12">Feb17 gRPC</text>
+      <text x="600" y="128" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">complete_stream</text>
+      <text x="600" y="148" text-anchor="middle" font-size="9" fill="#64748b">:50051</text>
+      <line x1="500" y1="120" x2="520" y2="120" stroke="#a78bfa" stroke-width="2"/>
+      <text x="510" y="112" font-size="9" fill="#a78bfa">user</text>
+      <text x="510" y="132" font-size="9" fill="#a78bfa">prompts</text>
+      <text x="510" y="148" font-size="9" fill="#a78bfa">only</text>
+
+      <!-- LLM -->
+      <rect x="520" y="200" width="160" height="90" rx="8" fill="#1e293b" stroke="#a78bfa" stroke-width="2"/>
+      <text x="600" y="230" text-anchor="middle" font-weight="600" font-size="14">LLM</text>
+      <text x="600" y="252" text-anchor="middle" font-size="11" fill="#94a3b8">DeepSeek / Llama</text>
+      <text x="600" y="272" text-anchor="middle" font-size="10" fill="#34d399">Never sees:</text>
+      <text x="600" y="288" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#64748b">__fetch_push__</text>
+      <line x1="600" y1="170" x2="600" y2="200" stroke="#a78bfa" stroke-width="2"/>
+
+      <!-- Response flow back -->
+      <path d="M 600 290 L 600 350 L 360 350 L 360 400 L 90 400 L 90 120" stroke="#34d399" stroke-width="1.5" stroke-dasharray="4 4" fill="none" marker-end="url(#arrowhead)"/>
+      <text x="420" y="375" text-anchor="middle" font-size="9" fill="#34d399">stream_token</text>
+
+      <!-- Control response path -->
+      <path d="M 297 200 L 297 380 L 90 380 L 90 120" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+      <text x="200" y="295" font-size="9" fill="#38bdf8">push payload / CSS</text>
+
+      <!-- Summary box -->
+      <rect x="20" y="440" width="860" height="160" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+      <text x="450" y="470" text-anchor="middle" font-weight="600" font-size="14">Separation Summary</text>
+      <text x="450" y="500" text-anchor="middle" font-size="11" fill="#94a3b8">The server inspects every incoming message. Control commands (__fetch_push__, __get_style__) are handled in-process and return immediately.</text>
+      <text x="450" y="530" text-anchor="middle" font-size="11" fill="#94a3b8">Only user prompts and __check_in__ (with a synthetic prompt) are forwarded to the LLM. The model has no concept of the control channel.</text>
+      <text x="450" y="565" text-anchor="middle" font-size="11" fill="#38bdf8">Push channel (TCP 4434) → proactive_queue → __fetch_push__ retrieves → app applies payload (chat, rich, layout, app clear).</text>
+      <text x="450" y="590" text-anchor="middle" font-size="11" fill="#a78bfa">AI channel: user text → format_prompt() → gRPC complete_stream → token stream → app displays.</text>
+    </svg>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><span class="legend-dot control"></span> Control channel (no LLM)</div>
+    <div class="legend-item"><span class="legend-dot ai"></span> AI channel (LLM inference)</div>
+    <div class="legend-item"><span class="legend-dot user"></span> User content / response</div>
+    <div class="legend-item"><span class="legend-dot blocked"></span> Blocked from LLM</div>
+  </div>
+
+  <div class="section">
+    <h2>Control commands (handled by server, never reach LLM)</h2>
+    <ul>
+      <li><code>__fetch_push__</code> — App polls for queued push messages. Server pops from proactive_queue, returns payload (JSON or plain text). Used for real-time updates, "app clear", structured payloads.</li>
+      <li><code>__get_style__</code> — App fetches chat CSS. Server reads style file and returns. Used on first connect or when style changes.</li>
+      <li><code>__whatever__</code> — Any other <code>__word__</code> (exact prompt) returns empty; no LLM. Extensible protocol for custom commands.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>AI path (reaches LLM)</h2>
+    <ul>
+      <li><code>__check_in__</code> — Proactive check-in. Server uses format_prompt with CHECK_IN_PROMPT; LLM generates greeting. If a queued proactive message exists, that is returned instead (no LLM).</li>
+      <li>User prompts — Any other text. Server may add web context, then format_prompt() builds ChatML, forwards to gRPC complete_stream.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>Push channel (external → app)</h2>
+    <ul>
+      <li>TCP listener on port 4434. External processes (e.g. <code>push-to-ember.ps1</code>) connect and send one message per line.</li>
+      <li>Messages are pushed to proactive_queue. Next <code>__fetch_push__</code> from the app retrieves them.</li>
+      <li>Payloads can be plain text, JSON (chat, chatCss, rich, layout, input, message), or <code>"app clear"</code> to reinitialize.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>Control pipe instruction (AI-side)</h2>
+    <p>The server injects <code>CONTROL_PIPE_INSTRUCTION</code> into the system prompt:</p>
+    <ul>
+      <li><strong>Control messages never reach the LLM</strong> — the server intercepts <code>__fetch_push__</code>, <code>__get_style__</code>, <code>__check_in__</code>, and any <code>__whatever__</code> before inference.</li>
+      <li><strong>AI → control</strong> — the AI can output <code>__command__</code> (e.g. <code>__app_clear__</code>). The server strips these from the stream, queues them to proactive_queue; the app receives them on <code>__fetch_push__</code>. The AI must <strong>never say or echo</strong> them to the user.</li>
+      <li><strong>Structured payloads</strong> — the AI can use <code>&lt;ember_push&gt;payload&lt;/ember_push&gt;</code> for JSON or "app clear". Same flow: stripped, queued, delivered on poll.</li>
+      <li><strong>Edge case</strong> — if a user pastes or types a control message, the AI must treat it as invisible. Do not interpret, explain, or respond to it.</li>
+    </ul>
+    <p>See <a href="CONTROL-PIPE.md">CONTROL-PIPE.md</a> for full documentation.</p>
+  </div>
+</body>
+</html>

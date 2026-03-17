@@ -23,7 +23,7 @@ param(
     [string]$Message = "",
     [string]$Payload = "",
     [string]$PayloadFile = "",
-    [string]$Host = "127.0.0.1",
+    [string]$PushHost = "127.0.0.1",
     [int]$Port = 4434
 )
 
@@ -50,7 +50,7 @@ if ($toSend -eq "") {
 
 try {
     $client = New-Object System.Net.Sockets.TcpClient
-    $client.Connect($Host, $Port)
+    $client.Connect($PushHost, $Port)
     $stream = $client.GetStream()
     $writer = New-Object System.IO.StreamWriter($stream)
     $writer.AutoFlush = $true
@@ -62,6 +62,6 @@ try {
     Write-Host "Pushed ($($toSend.Length) chars): $preview" -ForegroundColor Green
 } catch {
     Write-Host "Failed to push: $_" -ForegroundColor Red
-    Write-Host "Is ember-server running with push channel on ${Host}:${Port}?" -ForegroundColor Yellow
+    Write-Host "Is ember-server running with push channel on ${PushHost}:${Port}?" -ForegroundColor Yellow
     exit 1
 }

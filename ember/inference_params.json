@@ -3,8 +3,8 @@
   "temp": 0.5,
   "top_k": 40,
   "top_p": 0.85,
-  "penalty_last_n": 64,
-  "penalty_repeat": 1.25,
+  "penalty_last_n": 128,
+  "penalty_repeat": 1.35,
   "mirostat_tau": 3.0,
   "mirostat_eta": 0.1
 }
