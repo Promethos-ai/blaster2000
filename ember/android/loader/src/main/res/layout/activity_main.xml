@@ -57,4 +57,23 @@
         android:layout_height="wrap_content"
         android:indeterminateTint="@color/accent"
         android:visibility="gone" />
+
+    <ScrollView
+        android:id="@+id/debug_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="16dp"
+        android:fillViewport="true"
+        android:background="@color/background_log">
+        <TextView
+            android:id="@+id/debug_log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="11sp"
+            android:textColor="@color/text_secondary"
+            android:fontFamily="monospace"
+            android:padding="8dp"
+            android:maxLines="500" />
+    </ScrollView>
 </LinearLayout>

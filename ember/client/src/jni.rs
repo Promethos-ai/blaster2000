@@ -13,6 +13,7 @@ enum StreamItem {
     Style(String),
     Layout(String),
     Audio(String),
+    ControlPayload(String),
     Complete(String),
 }
 
@@ -83,6 +84,7 @@ pub extern "system" fn Java_com_ember_android_EmberClient_askStreaming(
                 |css| { let _ = tx.send(Ok(StreamItem::Style(css.to_string()))); },
                 |json| { let _ = tx.send(Ok(StreamItem::Layout(json.to_string()))); },
                 |text| { let _ = tx.send(Ok(StreamItem::Audio(text.to_string()))); },
+                |payload| { let _ = tx.send(Ok(StreamItem::ControlPayload(payload.to_string()))); },
             )
         }));
         match res {
@@ -125,6 +127,11 @@ pub extern "system" fn Java_com_ember_android_EmberClient_askStreaming(
             Ok(Ok(StreamItem::Audio(text))) => {
                 if let Ok(j) = env.new_string(&text) {
                     let _ = env.call_method(&callback, "onAudio", "(Ljava/lang/String;)V", &[JValue::Object(&JObject::from(j))]);
+                }
+            }
+            Ok(Ok(StreamItem::ControlPayload(payload))) => {
+                if let Ok(j) = env.new_string(&payload) {
+                    let _ = env.call_method(&callback, "onControlPayload", "(Ljava/lang/String;)V", &[JValue::Object(&JObject::from(j))]);
                 }
             }
             Ok(Ok(StreamItem::Complete(s))) => {

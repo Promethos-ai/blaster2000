@@ -2,6 +2,7 @@ package com.ember.android
 
 import android.Manifest
 import android.content.Intent
+import android.location.Location
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -45,7 +46,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_CHAT_IS_USER = "chat_is_user"
         private const val PREF_SPEAK_RESPONSES = "speak_responses"
         private const val STREAM_UPDATE_DELAY_MS = 80L  // Batch tokens for smoother display
-        private const val PUSH_POLL_INTERVAL_MS = 25_000L  // Poll for pushed messages when in foreground
+        private const val CONTROL_POLL_INTERVAL_MS = 5_000L  // Supervisory: poll control stream when in foreground
     }
 
     private lateinit var serverInput: EditText
@@ -66,6 +67,7 @@ class MainActivity : AppCompatActivity() {
     private val chatMessages = mutableListOf<ChatMessage>()
     private var chatCss = ChatWebView.DEFAULT_CSS
     private var hasFetchedStyle = false
+    private var lastSharedLocation: Location? = null
 
     private var tts: TextToSpeech? = null
 
@@ -194,11 +196,19 @@ class MainActivity : AppCompatActivity() {
 
         askBtn.setOnClickListener {
             val addr = serverInput.text.toString().trim()
-            val prompt = promptInput.text.toString().trim()
+            var prompt = promptInput.text.toString().trim()
             when {
                 addr.isEmpty() -> Toast.makeText(this, getString(R.string.error_server), Toast.LENGTH_SHORT).show()
                 prompt.isEmpty() -> Toast.makeText(this, getString(R.string.error_prompt), Toast.LENGTH_SHORT).show()
-                else -> askAi(addr, prompt, prompt)
+                else -> {
+                    // Prepend last known location so AI remembers it for follow-up questions
+                    lastSharedLocation?.let { loc ->
+                        if (!prompt.contains("lat ", ignoreCase = true)) {
+                            prompt = "${DeviceCapabilities.formatLocationForPrompt(loc)}\n\n$prompt"
+                        }
+                    }
+                    askAi(addr, prompt, prompt)
+                }
             }
         }
 
@@ -230,19 +240,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        startPushPoll()
+        startControlSupervisor()
     }
 
     override fun onPause() {
-        stopPushPoll()
+        stopControlSupervisor()
         super.onPause()
     }
 
-    /** Poll for pushed messages when app is in foreground. Uses __fetch_push__ (no LLM call). */
-    private fun startPushPoll() {
-        stopPushPoll()
+    /**
+     * Supervisory process: actively monitors the control pipeline for pushed messages.
+     * Polls __fetch_push__, commits payloads to the DOM, and refreshes the display.
+     */
+    private fun startControlSupervisor() {
+        stopControlSupervisor()
         pushPollJob = lifecycleScope.launch(Dispatchers.IO) {
-            delay(PUSH_POLL_INTERVAL_MS)  // Wait before first poll
+            delay(CONTROL_POLL_INTERVAL_MS)  // Wait before first poll
             while (isActive && !isDestroyed) {
                 val addr = withContext(Dispatchers.Main) { serverInput.text.toString().trim() }
                 if (addr.isNotEmpty()) {
@@ -252,19 +265,29 @@ class MainActivity : AppCompatActivity() {
                         })
                         if (result.isNotBlank()) {
                             withContext(Dispatchers.Main) {
-                                if (!isDestroyed) applyPushPayload(result.trim())
+                                if (!isDestroyed) {
+                                    applyPushPayload(result.trim())
+                                    commitControlToDom()
+                                }
                             }
                         }
                     } catch (_: Exception) {}
                 }
-                delay(PUSH_POLL_INTERVAL_MS)
+                delay(CONTROL_POLL_INTERVAL_MS)
             }
         }
     }
 
-    private fun stopPushPoll() {
+    private fun stopControlSupervisor() {
         pushPollJob?.cancel()
         pushPollJob = null
+    }
+
+    /** Commit control changes to DOM and refresh display. Called after applyPushPayload. */
+    private fun commitControlToDom() {
+        renderChat()
+        RichContentWebView.refresh(richContentWebView)
+        scrollToBottom()
     }
 
     /**
@@ -284,6 +307,11 @@ class MainActivity : AppCompatActivity() {
         if (trimmed.equals("app clear", ignoreCase = true) ||
             trimmed.equals("__app_clear__", ignoreCase = true)) {
             reinitializeDisplay()
+            return
+        }
+        if (trimmed.equals("refresh", ignoreCase = true)) {
+            renderChat()
+            RichContentWebView.refresh(richContentWebView)
             return
         }
         if (payload.startsWith("{")) {
@@ -328,6 +356,9 @@ class MainActivity : AppCompatActivity() {
                         if (speakSwitch.isChecked) tts?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, null)
                     }
                 }
+                if (obj.optBoolean("refresh", false)) {
+                    RichContentWebView.refresh(richContentWebView)
+                }
                 renderChat()
                 scrollToBottom()
             } catch (e: Exception) {
@@ -345,6 +376,7 @@ class MainActivity : AppCompatActivity() {
     private fun onLocationRequested() {
         val loc = DeviceCapabilities.getLastLocation(this)
         if (loc != null) {
+            lastSharedLocation = loc
             val locText = DeviceCapabilities.formatLocationForPrompt(loc)
             promptInput.setText("$locText\n\n${promptInput.text}")
             promptInput.setSelection(0)
@@ -393,6 +425,7 @@ class MainActivity : AppCompatActivity() {
     /** Reinitialize display: clear chat, rich content, error, prompt input; reset to default state. Called when __app_clear__ or "app clear" is received from ember server. */
     private fun reinitializeDisplay() {
         chatMessages.clear()
+        lastSharedLocation = null
         chatCss = ChatWebView.DEFAULT_CSS
         RichContentWebView.clear(richContentWebView, richContentContainer)
         promptInput.setText("")
@@ -542,6 +575,13 @@ class MainActivity : AppCompatActivity() {
                                 runOnUiThread {
                                     if (!isDestroyed && text.isNotBlank()) {
                                         speakText(text)
+                                    }
+                                }
+                            }
+                            override fun onControlPayload(payload: String) {
+                                runOnUiThread {
+                                    if (!isDestroyed && payload.isNotBlank()) {
+                                        applyPushPayload(payload)
                                     }
                                 }
                             }

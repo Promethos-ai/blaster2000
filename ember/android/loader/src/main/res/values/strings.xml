@@ -11,4 +11,5 @@
     <string name="error_fetch">Couldn\'t fetch releases</string>
     <string name="error_download">Download failed</string>
     <string name="error_install">Install failed — enable \"Install from unknown sources\"</string>
+    <string name="debug_log">Debug log</string>
 </resources>

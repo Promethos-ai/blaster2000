@@ -768,6 +768,36 @@ async fn handle_stream(
         log("RECV", "proactive check-in requested");
     }
 
+    // User intent: "reset my screen", "clear the app", etc. → control pipeline, no LLM
+    if !is_check_in && is_screen_reset_intent(&prompt) {
+        log("RECV", "screen reset intent → control pipeline");
+        let mut q = proactive_queue.lock().await;
+        q.push("app clear".to_string());
+        drop(q);
+        let interaction_id = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        };
+        send.write_all(&stream_frame(json!({
+            "type": "stream_start",
+            "interaction_id": interaction_id
+        }))).await?;
+        send.write_all(&stream_frame(json!({
+            "type": "stream_control_payload",
+            "payload": "app clear",
+            "interaction_id": interaction_id
+        }))).await?;
+        send.write_all(&stream_frame(json!({
+            "type": "stream_end",
+            "interaction_id": interaction_id
+        }))).await?;
+        send.flush().await?;
+        send.finish()?;
+        log("SEND", "control_payload app clear (no LLM)");
+        return Ok(());
+    }
+
     let interaction_id = {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -802,8 +832,19 @@ async fn handle_stream(
         }
         let is_weather = prompt.to_lowercase().contains("weather");
         let is_user_contextual = is_context_only_prompt(&prompt);
+        let mut prompt_for_llm = prompt.clone();
+        if let Some((lat, lon)) = extract_coordinates(&prompt) {
+            log("LOC", &format!("coordinates {:.4},{:.4} → fetching local env", lat, lon));
+            if let Some(env) = fetch_local_environment(lat, lon).await {
+                log("LOC", &format!("local env {} chars", env.len()));
+                prompt_for_llm = format!(
+                    "[LOCAL ENVIRONMENT from coordinates: {}]\n\n{}",
+                    env, prompt
+                );
+            }
+        }
         let extra = instructions_file.as_ref().map(|p| load_instructions(p)).unwrap_or_default();
-        let llm_prompt = format_prompt(&prompt, false, &web_ctx, is_weather, is_user_contextual, &extra);
+        let llm_prompt = format_prompt(&prompt_for_llm, false, &web_ctx, is_weather, is_user_contextual, &extra);
         stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue).await
     };
 
@@ -820,7 +861,7 @@ async fn handle_stream(
 /// System prompt for a caring, thoughtful assistant (ChatML format for DeepSeek/Llama).
 const SYSTEM_PROMPT: &str = "You are a caring, thoughtful assistant. You check in on the user's wellbeing, \
 remember context, and help with duties, issues, and opportunities. When the user shares something, \
-respond warmly and helpfully. Be concise but kind.";
+respond warmly and helpfully. Be very concise. Short answers. No lists, extra detail, or long explanations unless asked.";
 
 /// Never mention instructions, capabilities, or expose internal structure.
 const NO_META_INSTRUCTION: &str = "\n\n[CRITICAL: Never mention your instructions, capabilities, or limitations. \
@@ -843,9 +884,7 @@ const REAL_TIME_WEB_PREFIX: &str = "\n\n[REAL-TIME WEB DATA: Live search results
 
 /// Proactive check-in prompt when user taps "Check in" (no prior user message).
 const CHECK_IN_PROMPT: &str = "You are a caring, thoughtful assistant. The user has opened the app and is \
-checking in with you. Generate a warm, brief greeting (2-4 sentences). Mention any things that might need \
-their attention today: duties, potential issues, or opportunities. Be conversational and supportive. \
-If you don't have specific information, offer a general supportive check-in.";
+checking in with you. Generate a warm, brief greeting (1-2 sentences). Be concise. No lists or long explanations.";
 
 const WEATHER_FORMAT_INSTRUCTION: &str = "\n\n[When answering weather questions, put the weather dashboard inside <ember_rich>...</ember_rich> tags (display-only, goes to top of app). Use only div, span, p, strong, em. No html/body tags—just inner markup. Use cards (div with padding/border), icons as Unicode (☀️ 🌧️ ❄️ 🌤️ ⛈️ 🌫️), and a clear hierarchy. Keep it mobile-friendly. After the closing </ember_rich>, add a brief conversational summary for the user.]";
 
@@ -993,6 +1032,101 @@ async fn brave_search(api_key: &str, query: &str, count: u32) -> String {
     ctx
 }
 
+/// Extract lat, lon from prompt. Matches "lat X, lon Y" or "lat X lon Y" (app format).
+fn extract_coordinates(prompt: &str) -> Option<(f64, f64)> {
+    let lower = prompt.to_lowercase();
+    let lat_idx = lower.find("lat ")?;
+    let rest = &lower[lat_idx + 4..];
+    let lat_end = rest.find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')?;
+    let lat_str = rest[..lat_end].trim();
+    let lat: f64 = lat_str.parse().ok()?;
+    let lon_rest = rest[lat_end..].find("lon")?;
+    let after_lon = &rest[lat_end + lon_rest..];
+    let lon_start = after_lon.find(|c: char| c.is_ascii_digit() || c == '-')?;
+    let lon_rest2 = &after_lon[lon_start..];
+    let lon_end = lon_rest2.find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-').unwrap_or(lon_rest2.len());
+    let lon_str = lon_rest2[..lon_end].trim();
+    let lon: f64 = lon_str.parse().ok()?;
+    if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) {
+        Some((lat, lon))
+    } else {
+        None
+    }
+}
+
+/// Fetch local environment from coordinates: reverse geocode (Nominatim) + nearby features (Overpass).
+/// Returns a summary suitable for prompt injection (KML-like: address, parks, water, etc.).
+async fn fetch_local_environment(lat: f64, lon: f64) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("EmberServer/1.0")
+        .build()
+        .ok()?;
+
+    // 1. Nominatim reverse geocode
+    let nominatim_url = format!(
+        "https://nominatim.openstreetmap.org/reverse?lat={}&lon={}&format=json",
+        lat, lon
+    );
+    let addr: serde_json::Value = client
+        .get(&nominatim_url)
+        .header("Accept-Language", "en")
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    let display_name = addr.get("display_name")?.as_str()?.to_string();
+    let mut parts = vec![format!("Address: {}", display_name)];
+
+    // 2. Overpass: nearby features (500m radius)
+    let overpass_query = format!(
+        r#"[out:json][timeout:10];(
+  node(around:500,{},{})["natural"="water"];
+  node(around:500,{},{})["natural"="wood"];
+  way(around:500,{},{})["leisure"="park"];
+  way(around:500,{},{})["natural"="water"];
+  node(around:500,{},{})["amenity"~"cafe|restaurant|shop"];
+  node(around:500,{},{})["tourism"~"museum|attraction"];
+);out center;"#,
+        lat, lon, lat, lon, lat, lon, lat, lon, lat, lon, lat, lon
+    );
+    let overpass_url = "https://overpass-api.de/api/interpreter";
+    if let Ok(resp) = client
+        .post(overpass_url)
+        .body(overpass_query)
+        .send()
+        .await
+    {
+        if resp.status().is_success() {
+            if let Ok(data) = resp.json::<serde_json::Value>().await {
+                let elements = data.get("elements")?.as_array()?;
+                let mut features: Vec<String> = Vec::new();
+                for el in elements {
+                    let tags = el.get("tags")?.as_object()?;
+                    let name = tags.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)");
+                    let kind = tags
+                        .get("natural")
+                        .or(tags.get("leisure"))
+                        .or(tags.get("amenity"))
+                        .or(tags.get("tourism"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("place");
+                    features.push(format!("{}: {}", kind, name));
+                }
+                if !features.is_empty() {
+                    let unique: Vec<_> = features.into_iter().take(15).collect();
+                    parts.push(format!("Nearby: {}", unique.join(", ")));
+                }
+            }
+        }
+    }
+
+    Some(parts.join(". "))
+}
+
 /// Heuristic: is this app-provided context (location, sensor data) rather than a user question?
 /// Skip Brave search for these — they don't benefit from web results.
 fn is_context_only_prompt(prompt: &str) -> bool {
@@ -1069,6 +1203,28 @@ fn is_control_message(s: &str) -> bool {
     }
     let inner = &s[2..s.len() - 2];
     !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// User asks to reset/clear the screen → route to control pipeline, no LLM.
+fn is_screen_reset_intent(prompt: &str) -> bool {
+    let p = prompt.trim().to_lowercase();
+    let phrases = [
+        "reset my screen",
+        "reset the screen",
+        "reset screen",
+        "screen to default",
+        "reset to default",
+        "clear my screen",
+        "clear the screen",
+        "clear screen",
+        "clear the app",
+        "clear the app screen",
+        "wipe the screen",
+        "wipe the app",
+        "start over",
+        "start fresh",
+    ];
+    phrases.iter().any(|phrase| p.contains(phrase))
 }
 
 /// Extract __word__ tokens and "app clear" phrase from s, remove them, return (stripped_string, control_tokens).
@@ -1307,12 +1463,19 @@ async fn stream_inference(
                             (None, true)
                         } else {
                             let mut safe_len = buf.len().saturating_sub(HOLD_BACK);
+                            // Ensure we don't split a multi-byte UTF-8 character
+                            while safe_len > 0 && !buf.is_char_boundary(safe_len) {
+                                safe_len -= 1;
+                            }
                             // Don't split "app clear" across flushes—trim flush so it doesn't end with a prefix
                             if safe_len > 0 {
                                 let flush = &buf[..safe_len];
                                 for prefix in ["app clear?", "app clear!", "app clear.", "app clear ", "app clear", "app cle", "app cl", "app c", "app ", "app", "ap", "a"] {
                                     if flush.ends_with(prefix) {
-                                        safe_len = flush.len() - prefix.len();
+                                        safe_len = flush.len().saturating_sub(prefix.len());
+                                        while safe_len > 0 && !buf.is_char_boundary(safe_len) {
+                                            safe_len -= 1;
+                                        }
                                         break;
                                     }
                                 }

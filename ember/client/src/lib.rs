@@ -114,13 +114,13 @@ where
     F: FnMut(&str) + Send,
     G: FnMut(&str) + Send,
 {
-    ask_ai_streaming_full(addr_str, prompt, on_token, on_rich, |_| {}, |_| {}, |_| {})
+    ask_ai_streaming_full(addr_str, prompt, on_token, on_rich, |_| {}, |_| {}, |_| {}, |_| {})
 }
 
-/// Ask the AI with full control callbacks: token, rich, style, layout, audio.
-pub fn ask_ai_streaming_full<F, G, H, I, J>(
+/// Ask the AI with full control callbacks: token, rich, style, layout, audio, control_payload.
+pub fn ask_ai_streaming_full<F, G, H, I, J, K>(
     addr_str: &str, prompt: &str,
-    on_token: F, on_rich: G, on_style: H, on_layout: I, on_audio: J,
+    on_token: F, on_rich: G, on_style: H, on_layout: I, on_audio: J, on_control: K,
 ) -> Result<String, String>
 where
     F: FnMut(&str) + Send,
@@ -128,6 +128,7 @@ where
     H: FnMut(&str) + Send,
     I: FnMut(&str) + Send,
     J: FnMut(&str) + Send,
+    K: FnMut(&str) + Send,
 {
     let addrs: Vec<SocketAddr> = addr_str.to_socket_addrs().map_err(|e| {
         let msg = e.to_string();
@@ -144,7 +145,7 @@ where
         .or_else(|| addrs.into_iter().next())
         .ok_or_else(|| "Could not resolve address".to_string())?;
     let server_name = extract_host(addr_str);
-    ask_ai_addr_streaming_full(server_addr, server_name, prompt, on_token, on_rich, on_style, on_layout, on_audio)
+    ask_ai_addr_streaming_full(server_addr, server_name, prompt, on_token, on_rich, on_style, on_layout, on_audio, on_control)
 }
 
 /// Extract host part from "host:port" for TLS SNI.
@@ -185,10 +186,10 @@ where
     F: FnMut(&str) + Send,
     G: FnMut(&str) + Send,
 {
-    ask_ai_addr_streaming_full(server_addr, server_name, prompt, on_token, on_rich, |_| {}, |_| {}, |_| {})
+    ask_ai_addr_streaming_full(server_addr, server_name, prompt, on_token, on_rich, |_| {}, |_| {}, |_| {}, |_| {})
 }
 
-fn ask_ai_addr_streaming_full<F, G, H, I, J>(
+fn ask_ai_addr_streaming_full<F, G, H, I, J, K>(
     server_addr: SocketAddr,
     server_name: String,
     prompt: &str,
@@ -197,6 +198,7 @@ fn ask_ai_addr_streaming_full<F, G, H, I, J>(
     on_style: H,
     on_layout: I,
     on_audio: J,
+    on_control: K,
 ) -> Result<String, String>
 where
     F: FnMut(&str) + Send,
@@ -204,6 +206,7 @@ where
     H: FnMut(&str) + Send,
     I: FnMut(&str) + Send,
     J: FnMut(&str) + Send,
+    K: FnMut(&str) + Send,
 {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -212,11 +215,11 @@ where
         .map_err(|e| e.to_string())?;
     rt.block_on(async_run_streaming(
         server_addr, &server_name, prompt, provider,
-        on_token, on_rich, on_style, on_layout, on_audio,
+        on_token, on_rich, on_style, on_layout, on_audio, on_control,
     )).map_err(|e| e.to_string())
 }
 
-async fn async_run_streaming<F, G, H, I, J>(
+async fn async_run_streaming<F, G, H, I, J, K>(
     server_addr: SocketAddr,
     server_name: &str,
     prompt: &str,
@@ -226,6 +229,7 @@ async fn async_run_streaming<F, G, H, I, J>(
     on_style: H,
     on_layout: I,
     on_audio: J,
+    on_control: K,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
 where
     F: FnMut(&str) + Send,
@@ -233,6 +237,7 @@ where
     H: FnMut(&str) + Send,
     I: FnMut(&str) + Send,
     J: FnMut(&str) + Send,
+    K: FnMut(&str) + Send,
 {
     let client_config = configure_client(provider)?;
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
@@ -267,9 +272,9 @@ where
     send.write_all(prompt.as_bytes()).await?;
     send.finish()?;
 
-    let result = parse_stream_response::<4096, _, _, _, _, _>(
+    let result = parse_stream_response::<4096, _, _, _, _, _, _>(
         &mut recv, TIMEOUT,
-        on_token, on_rich, on_style, on_layout, on_audio,
+        on_token, on_rich, on_style, on_layout, on_audio, on_control,
     ).await?;
 
     connection.close(0u32.into(), b"done");
@@ -279,8 +284,8 @@ where
 }
 
 /// Parse newline-delimited JSON streaming frames from the ember server.
-/// Calls callbacks for each frame type: token (chat), rich (HTML), style (CSS), layout (JSON), audio (TTS).
-async fn parse_stream_response<const BUF: usize, F, G, H, I, J>(
+/// Calls callbacks for each frame type: token (chat), rich (HTML), style (CSS), layout (JSON), audio (TTS), control_payload.
+async fn parse_stream_response<const BUF: usize, F, G, H, I, J, K>(
     recv: &mut quinn::RecvStream,
     timeout: std::time::Duration,
     mut on_token: F,
@@ -288,6 +293,7 @@ async fn parse_stream_response<const BUF: usize, F, G, H, I, J>(
     mut on_style: H,
     mut on_layout: I,
     mut on_audio: J,
+    mut on_control: K,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
 where
     F: FnMut(&str),
@@ -295,6 +301,7 @@ where
     H: FnMut(&str),
     I: FnMut(&str),
     J: FnMut(&str),
+    K: FnMut(&str),
 {
     let mut buf = Vec::with_capacity(4096);
     let mut result = String::new();
@@ -361,6 +368,11 @@ where
                     "stream_audio" => {
                         if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
                             on_audio(text);
+                        }
+                    }
+                    "stream_control_payload" => {
+                        if let Some(payload) = v.get("payload").and_then(|p| p.as_str()) {
+                            on_control(payload);
                         }
                     }
                     "stream_end" => {

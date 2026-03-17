@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.view.View
 import android.widget.Button
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -21,6 +22,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.net.ssl.HttpsURLConnection
 
 class MainActivity : AppCompatActivity() {
@@ -38,6 +42,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var latestVersion: TextView
     private lateinit var installBtn: Button
     private lateinit var progress: ProgressBar
+    private lateinit var debugLog: TextView
+    private lateinit var debugScroll: ScrollView
+
+    private val logHistory = StringBuilder()
+    private val logDateFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+    private val maxLogLines = 200
 
     private var latestRelease: Release? = null
 
@@ -52,10 +62,28 @@ class MainActivity : AppCompatActivity() {
         latestVersion = findViewById(R.id.latest_version)
         installBtn = findViewById(R.id.install_btn)
         progress = findViewById(R.id.progress)
+        debugLog = findViewById(R.id.debug_log)
+        debugScroll = findViewById(R.id.debug_scroll)
 
         installBtn.setOnClickListener { latestRelease?.let { downloadAndInstall(it) } }
 
+        log("App started")
         fetchReleases()
+    }
+
+    private fun log(msg: String) {
+        val line = "${logDateFormat.format(Date())} $msg"
+        if (logHistory.isNotEmpty()) logHistory.append("\n")
+        logHistory.append(line)
+        val lines = logHistory.split("\n")
+        if (lines.size > maxLogLines) {
+            logHistory.clear()
+            logHistory.append(lines.takeLast(maxLogLines).joinToString("\n"))
+        }
+        runOnUiThread {
+            debugLog.text = logHistory.toString()
+            debugScroll.post { debugScroll.fullScroll(View.FOCUS_DOWN) }
+        }
     }
 
     private fun getInstalledVersion(): String? {
@@ -71,6 +99,7 @@ class MainActivity : AppCompatActivity() {
     private fun fetchReleases() {
         progress.visibility = View.VISIBLE
         statusText.text = getString(R.string.checking)
+        log("Fetching $GITHUB_RELEASES")
 
         lifecycleScope.launch {
             try {
@@ -78,11 +107,19 @@ class MainActivity : AppCompatActivity() {
                     val conn = URL(GITHUB_RELEASES).openConnection() as HttpsURLConnection
                     conn.requestMethod = "GET"
                     conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
+                    conn.setRequestProperty("User-Agent", "EmberLoader/1.0")
                     conn.connectTimeout = 15000
                     conn.readTimeout = 15000
-                    conn.inputStream.bufferedReader().use { it.readText() }
+                    log("Connecting...")
+                    val code = conn.responseCode
+                    log("HTTP $code")
+                    if (code != 200) throw Exception("HTTP $code")
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    log("Response ${body.length} chars")
+                    body
                 }
                 val arr = JSONArray(releases)
+                log("Parsed ${arr.length()} releases")
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
                     val tagName = obj.optString("tag_name", "")
@@ -102,12 +139,17 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (latestRelease != null) break
                 }
+                latestRelease?.let { log("Found ${it.tagName} @ ${it.apkUrl.take(60)}...") }
+                    ?: log("No ember-*.apk in releases")
                 withContext(Dispatchers.Main) { updateUI() }
             } catch (e: Exception) {
+                log("ERROR: ${e.message}")
+                e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     progress.visibility = View.GONE
-                    statusText.text = getString(R.string.error_fetch)
-                    Toast.makeText(this@MainActivity, e.message, Toast.LENGTH_LONG).show()
+                    val msg = e.message ?: "Unknown error"
+                    statusText.text = getString(R.string.error_fetch) + ": $msg"
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -155,6 +197,7 @@ class MainActivity : AppCompatActivity() {
         installBtn.isEnabled = false
         progress.visibility = View.VISIBLE
         statusText.text = getString(R.string.downloading, 0)
+        log("Downloading ${release.apkUrl}")
 
         lifecycleScope.launch {
             try {
@@ -162,10 +205,14 @@ class MainActivity : AppCompatActivity() {
                     val apkFile = File(cacheDir, "ember-update.apk")
                     val conn = URL(release.apkUrl).openConnection() as HttpURLConnection
                     conn.instanceFollowRedirects = true
+                    conn.setRequestProperty("User-Agent", "EmberLoader/1.0")
                     conn.connectTimeout = 30000
                     conn.readTimeout = 60000
+                    log("Connected, size=${conn.contentLengthLong}")
                     val total = conn.contentLengthLong
                     var downloaded = 0L
+                    var lastLoggedPct = -1
+                    var lastUiPct = -1
                     conn.inputStream.use { input ->
                         FileOutputStream(apkFile).use { output ->
                             val buf = ByteArray(8192)
@@ -175,8 +222,15 @@ class MainActivity : AppCompatActivity() {
                                 downloaded += n
                                 if (total > 0) {
                                     val pct = (100 * downloaded / total).toInt()
-                                    withContext(Dispatchers.Main) {
-                                        statusText.text = getString(R.string.downloading, pct)
+                                    val shouldLog = pct >= lastLoggedPct + 25 || pct == 100
+                                    val shouldUpdateUi = pct != lastUiPct
+                                    if (shouldLog) lastLoggedPct = pct
+                                    if (shouldUpdateUi) lastUiPct = pct
+                                    if (shouldUpdateUi || shouldLog) {
+                                        withContext(Dispatchers.Main) {
+                                            if (shouldUpdateUi) statusText.text = getString(R.string.downloading, pct)
+                                            if (shouldLog) log("Download $pct%")
+                                        }
                                     }
                                 }
                             }
@@ -187,9 +241,11 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     progress.visibility = View.GONE
                     statusText.text = getString(R.string.installing)
+                    log("Downloaded ${file.length()} bytes, installing")
                     installApk(file)
                 }
             } catch (e: Exception) {
+                log("Download ERROR: ${e.message}")
                 withContext(Dispatchers.Main) {
                     progress.visibility = View.GONE
                     installBtn.isEnabled = true
@@ -202,6 +258,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun installApk(file: File) {
         try {
+            log("Launching installer")
             val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
@@ -210,6 +267,7 @@ class MainActivity : AppCompatActivity() {
             }
             startActivityForResult(intent, INSTALL_REQUEST)
         } catch (e: Exception) {
+            log("Install ERROR: ${e.message}")
             Toast.makeText(this, getString(R.string.error_install), Toast.LENGTH_LONG).show()
             installBtn.isEnabled = true
         }
@@ -219,7 +277,9 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == INSTALL_REQUEST) {
             installBtn.isEnabled = true
-            statusText.text = if (resultCode == RESULT_OK) "Installed" else "Install cancelled"
+            val msg = if (resultCode == RESULT_OK) "Installed" else "Install cancelled"
+            statusText.text = msg
+            log(msg)
         }
     }
 }

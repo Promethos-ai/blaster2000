@@ -10,4 +10,5 @@ interface TokenCallback {
     fun onStyle(css: String) {}
     fun onLayout(json: String) {}
     fun onAudio(text: String) {}
+    fun onControlPayload(payload: String) {}
 }

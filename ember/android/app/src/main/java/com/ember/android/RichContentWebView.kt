@@ -50,6 +50,11 @@ object RichContentWebView {
         }
     }
 
+    /** Force WebView to re-render the current DOM. Fixes layout glitches, orientation changes. */
+    fun refresh(webView: WebView) {
+        webView.post { webView.reload() }
+    }
+
     /** Clear content and hide the container. */
     fun clear(webView: WebView, container: View?) {
         webView.post {

@@ -103,6 +103,8 @@ When the app receives `"app clear"` or `"__app_clear__"` (from push channel or A
 .\push-to-ember.ps1 "app clear"
 ```
 
+**User intent:** When the user says "reset my screen", "clear the app", "screen to default", etc., the server routes to the control pipeline (no LLM). It sends `stream_control_payload` so the app executes immediately.
+
 **AI output:** The AI can output `__app_clear__` or `<ember_push>app clear</ember_push>`; the server strips it; the app receives it on its next poll. If the AI says "app clear" as text, the server has a failsafe and the app also detects it locally.
 
 ---
@@ -119,6 +121,9 @@ The server exposes a TCP push channel (default port **4434**) so external proces
 
 # App reset
 .\push-to-ember.ps1 "app clear"
+
+# Refresh DOM (re-render chat + rich WebViews; fixes layout glitches)
+.\push-to-ember.ps1 "refresh"
 
 # Structured payload (JSON)
 .\push-to-ember.ps1 -Payload '{"chat":[{"text":"Hi","isUser":true}],"rich":"<div>Dashboard</div>"}'
@@ -140,6 +145,7 @@ If the TCP push channel is unavailable, the script writes to `push-queue.txt`. T
 | `layout` | `{rich_height, theme}` | Layout hints |
 | `input` | string | Prefill the prompt input |
 | `message` | string | Append as AI message (fallback) |
+| `refresh` | boolean | Re-render chat + rich WebViews (fixes layout glitches) |
 
 ---
 
@@ -149,11 +155,11 @@ If the TCP push channel is unavailable, the script writes to `push-queue.txt`. T
 |---------|-------------|
 | **Streaming chat** | Token-by-token AI responses |
 | **Check-in** | Proactive greeting when user taps "Check in" |
-| **Push polling** | Polls `__fetch_push__` every 25s when in foreground |
+| **Control supervisor** | Polls `__fetch_push__` every 5s when in foreground; commits payloads to DOM and refreshes |
 | **TTS** | Optional text-to-speech for AI responses |
 | **Rich content** | WebView for HTML (weather, cards, etc.) |
 | **Voice input** | Microphone for speech-to-text |
-| **Location** | Share location for context |
+| **Location** | Share location for context; server fetches local environment (address, nearby parks/water/shops) from coordinates via OSM. Location is remembered for follow-up questions until app clear. |
 | **Error area** | Fixed area for errors (no scroll) |
 | **Display adaptation** | Responsive layouts for different screen sizes |
 

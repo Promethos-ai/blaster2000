@@ -103,8 +103,9 @@ The server exposes a TCP push channel (default port **4434**) so external proces
 | `layout` | `{rich_height, theme}` | Layout hints (`rich_height`: "full", "auto", "140") |
 | `input` | string | Prefill the prompt input |
 | `message` | string | Append as AI message (fallback) |
+| `refresh` | boolean | Re-render chat + rich WebViews |
 
-Use `--push-port N` to change the port. Forward TCP port 4434 if pushing from another machine.
+Plain text `"refresh"` also triggers DOM refresh. Use `--push-port N` to change the port. Forward TCP port 4434 if pushing from another machine.
 
 ### Control pipe (`__whatever__`)
 
