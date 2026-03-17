@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- ChatGPT/Grok-style: chat-first, input at bottom, minimal chrome -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/root_layout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@color/background_dark">
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:id="@+id/root_layout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="@color/background_dark">
 
     <!-- Compact header: Ember version + server dropdown + menu -->
     <LinearLayout
@@ -160,4 +164,10 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:scaleType="centerInside" />
     </LinearLayout>
-</LinearLayout>
+    </LinearLayout>
+
+    <!-- Splash overlay: Promethos logo + EMBER ASSISTANT, fades on first server connection -->
+    <include
+        android:id="@+id/splash_include"
+        layout="@layout/splash_overlay" />
+</FrameLayout>

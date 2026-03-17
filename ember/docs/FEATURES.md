@@ -4,6 +4,9 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 
 ## Changelog
 
+### v0.1.30
+- **Splash screen** — On server connect, shows Promethos logo + "EMBER ASSISTANT", then fades to normal layout. Fade triggers on first push or first ask response.
+
 ### v0.1.29
 - **Error sound** — On error, app plays a gentle tone instead of speaking error text.
 - **Chat styles server-side** — `.\push-to-ember.ps1 "style"` pushes chat-style.css; server force-reloads styles on startup.

@@ -15,6 +15,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.RecognizerIntent
 import android.util.Log
 import android.view.View
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.webkit.WebView
 import android.widget.ArrayAdapter
 import android.widget.EditText
@@ -77,6 +78,9 @@ class MainActivity : AppCompatActivity() {
     private var pendingStreamUpdate: Runnable? = null
 
     private var pushPollJob: Job? = null
+
+    private var splashOverlay: View? = null
+    private var hasShownSplashFade = false
 
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -159,6 +163,7 @@ class MainActivity : AppCompatActivity() {
         richContentWebView = findViewById(R.id.rich_content_webview)
         richContentContainer = findViewById(R.id.rich_content_container)
         errorText = findViewById(R.id.error_text)
+        splashOverlay = findViewById(R.id.splash_include)
         Log.i(DIAG, "MainActivity - all findViewById done")
 
         appTitle.text = "Ember ${BuildConfig.VERSION_NAME}"
@@ -263,6 +268,7 @@ class MainActivity : AppCompatActivity() {
                                 if (!isDestroyed) {
                                     applyPushPayload(result.trim())
                                     commitControlToDom()
+                                    fadeOutSplashOnce()
                                 }
                             }
                         }
@@ -283,6 +289,19 @@ class MainActivity : AppCompatActivity() {
         renderChat()
         RichContentWebView.refresh(richContentWebView)
         scrollToBottom()
+    }
+
+    /** Fade out splash overlay on first server connection, then hide it. */
+    private fun fadeOutSplashOnce() {
+        if (hasShownSplashFade) return
+        hasShownSplashFade = true
+        val overlay = splashOverlay ?: return
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(700)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .withEndAction { overlay.visibility = View.GONE }
+            .start()
     }
 
     /**
@@ -682,6 +701,7 @@ class MainActivity : AppCompatActivity() {
             }
             runOnUiThread {
                 if (!isDestroyed) {
+                    fadeOutSplashOnce()
                     pendingStreamUpdate?.let { streamUpdateHandler.removeCallbacks(it) }
                     pendingStreamUpdate = null
                     val last = chatMessages.lastIndex
