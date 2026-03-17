@@ -54,16 +54,7 @@
             android:padding="12dp" />
     </FrameLayout>
 
-    <!-- Chat messages (WebView with server CSS, full width, copy/paste) -->
-    <WebView
-        android:id="@+id/chat_webview"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="@color/background_dark"
-        android:scrollbars="vertical" />
-
-    <!-- Input area -->
+    <!-- Input area: homed above chat so it stays visible; new answers appear below -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -181,4 +172,13 @@
             android:textAllCaps="false"
             android:background="@drawable/btn_primary" />
     </LinearLayout>
+
+    <!-- Chat messages (WebView with server CSS, full width, copy/paste); scroll to read -->
+    <WebView
+        android:id="@+id/chat_webview"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@color/background_dark"
+        android:scrollbars="vertical" />
 </LinearLayout>

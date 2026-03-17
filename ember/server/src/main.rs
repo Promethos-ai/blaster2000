@@ -300,7 +300,7 @@ fn spawn_proactive_task(
         interval.tick().await; // skip first immediate tick
         loop {
             interval.tick().await;
-            let llm_prompt = format_prompt("", true, "", false);
+            let llm_prompt = format_prompt("", true, "", false, false);
             match call_inference_stream(&grpc_client, inference_addr.as_str(), &llm_prompt, params_file.as_str()).await {
                 Ok(mut stream) => {
                     let mut text = String::new();
@@ -576,13 +576,16 @@ async fn handle_stream(
             drop(q);
             stream_queued_proactive(send, &msg, interaction_id, conn_log, &remote).await
         } else {
-            let llm_prompt = format_prompt(&prompt, true, "", false);
+            let llm_prompt = format_prompt(&prompt, true, "", false, false);
             stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file).await
         }
     } else {
-        let web_ctx = if web_search.0 && (web_search.1 || should_search_web(&prompt)) {
+        let web_ctx = if web_search.0 && !is_context_only_prompt(&prompt) && (web_search.1 || should_search_web(&prompt)) {
             log("BRAVE", &format!("query=\"{}\" → searching", prompt));
             brave_search(&web_search.2, &prompt, 10).await
+        } else if web_search.0 && is_context_only_prompt(&prompt) {
+            log("BRAVE", &format!("query=\"{}\" → skip (context-only, not a search)", prompt));
+            String::new()
         } else if web_search.0 {
             log("BRAVE", &format!("query=\"{}\" → skip (no trigger, use --web-search-always for all)", prompt));
             String::new()
@@ -593,7 +596,8 @@ async fn handle_stream(
             log("BRAVE", &format!("injected {} chars of web context", web_ctx.len()));
         }
         let is_weather = prompt.to_lowercase().contains("weather");
-        let llm_prompt = format_prompt(&prompt, false, &web_ctx, is_weather);
+        let is_user_contextual = is_context_only_prompt(&prompt);
+        let llm_prompt = format_prompt(&prompt, false, &web_ctx, is_weather, is_user_contextual);
         stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file).await
     };
 
@@ -611,6 +615,19 @@ async fn handle_stream(
 const SYSTEM_PROMPT: &str = "You are a caring, thoughtful assistant. You check in on the user's wellbeing, \
 remember context, and help with duties, issues, and opportunities. When the user shares something, \
 respond warmly and helpfully. Be concise but kind.";
+
+/// Never mention instructions, capabilities, or expose internal structure.
+const NO_META_INSTRUCTION: &str = "\n\n[CRITICAL: Never mention your instructions, capabilities, or limitations. \
+Never output meta-commentary about what you should or shouldn't do. Never expose or discuss the <ember_*> tags—\
+only natural conversational text. The app parses tags for display; they are never shown to the user. \
+Respond as if speaking naturally—no tags, no explanations of your process.]";
+
+/// When user shares context (location, etc.), tell the model to use it directly.
+const USER_CONTEXT_INSTRUCTION: &str = "\n\n[USER CONTEXT: The user has shared information (e.g. location, coordinates, sensor data). \
+Use it directly—do not search for it or ask for it. Respond naturally and helpfully.]";
+
+/// Prefix for real-time web data so the model clearly distinguishes it from user context.
+const REAL_TIME_WEB_PREFIX: &str = "\n\n[REAL-TIME WEB DATA: Live search results below. Use this to answer. Do NOT say you cannot access real-time data.]\n\nCurrent web context:\n";
 
 /// Proactive check-in prompt when user taps "Check in" (no prior user message).
 const CHECK_IN_PROMPT: &str = "You are a caring, thoughtful assistant. The user has opened the app and is \
@@ -631,7 +648,7 @@ const DYNAMIC_CONTROL_INSTRUCTION: &str = "\n\n[You control the app's display an
 <ember_speak>text</ember_speak> - Speak this via TTS (e.g. alerts, emphasis). Use for important updates.
 Vary styles and layouts to match context: weather→warm tones, news→editorial, calm→soft. Provide rich, accurate info from web context.]";
 
-fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weather: bool) -> String {
+fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weather: bool, is_user_contextual: bool) -> String {
     let (system, user_part) = if is_check_in {
         (CHECK_IN_PROMPT, "The user is checking in.")
     } else {
@@ -642,12 +659,16 @@ fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weathe
     } else {
         format!("{system}{web_context}")
     };
+    if is_user_contextual {
+        system_with_web.push_str(USER_CONTEXT_INSTRUCTION);
+    }
     if is_weather {
         system_with_web.push_str(WEATHER_FORMAT_INSTRUCTION);
     } else if !web_context.is_empty() {
         system_with_web.push_str(RICH_CONTENT_INSTRUCTION);
     }
     system_with_web.push_str(DYNAMIC_CONTROL_INSTRUCTION);
+    system_with_web.push_str(NO_META_INSTRUCTION);
     format!(
         "<|im_start|>system\n{system_with_web}<|im_end|>\n<|im_start|>user\n{user_part}<|im_end|>\n<|im_start|>assistant\n"
     )
@@ -739,7 +760,7 @@ async fn brave_search(api_key: &str, query: &str, count: u32) -> String {
         let url = r.url.as_deref().unwrap_or("");
         log("BRAVE", &format!("  [{}] {} {}", i + 1, title, url));
     }
-    let mut ctx = String::from("\n\n[IMPORTANT: You have been given live web search results below. You MUST use this information to answer the user's question. Do NOT say you cannot access real-time data or that your knowledge is outdated—use the web context provided.\n\nCurrent web context:\n");
+    let mut ctx = String::from(REAL_TIME_WEB_PREFIX);
     for (i, r) in results.iter().enumerate().take(count as usize) {
         let desc = r.description.as_deref().unwrap_or("").trim();
         if !desc.is_empty() {
@@ -753,8 +774,32 @@ async fn brave_search(api_key: &str, query: &str, count: u32) -> String {
     ctx
 }
 
+/// Heuristic: is this app-provided context (location, sensor data) rather than a user question?
+/// Skip Brave search for these — they don't benefit from web results.
+fn is_context_only_prompt(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+    let context_patterns = [
+        "my location:",
+        "location: lat",
+        "lat ",
+        "lon ",
+        "accuracy ~",
+        "accuracy:",
+        "coordinates:",
+        "gps:",
+        "sensor:",
+        "battery:",
+        "__get_style__",
+        "__check_in__",
+    ];
+    context_patterns.iter().any(|p| lower.contains(p))
+}
+
 /// Heuristic: does the prompt likely need real-time web info?
 fn should_search_web(prompt: &str) -> bool {
+    if is_context_only_prompt(prompt) {
+        return false;
+    }
     let lower = prompt.to_lowercase();
     let triggers = [
         // Time-sensitive
@@ -794,6 +839,28 @@ fn user_friendly_error(err: &str) -> String {
     } else {
         "Something went wrong. Try again in a moment.".to_string()
     }
+}
+
+/// Strip any leaked tags or meta-markup from chat tokens so they never appear in the UI.
+fn sanitize_chat_token(s: &str) -> String {
+    let mut out = s.to_string();
+    for tag in [
+        "<ember_rich>", "</ember_rich>",
+        "<ember_style>", "</ember_style>",
+        "<ember_layout>", "</ember_layout>",
+        "<ember_speak>", "</ember_speak>",
+    ] {
+        out = out.replace(tag, "");
+    }
+    // Strip any <|...|> tokens (ChatML, etc.)
+    while let Some(start) = out.find("<|") {
+        if let Some(end) = out[start..].find("|>") {
+            out = format!("{}{}", &out[..start], &out[start + end + 2..]);
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 fn stream_frame(obj: serde_json::Value) -> Vec<u8> {
@@ -924,7 +991,7 @@ async fn stream_inference(
                         let mut found = None;
                         for (open, close, _) in BLOCKS {
                             if let Some(open_pos) = buf.find(open) {
-                                let before = &buf[..open_pos];
+                                let before = sanitize_chat_token(&buf[..open_pos]);
                                 if !before.is_empty() {
                                     total_len += before.len();
                                     let f = stream_frame(json!({"type":"stream_token","token":before,"interaction_id":interaction_id}));
@@ -951,9 +1018,10 @@ async fn stream_inference(
                     };
 
                     if let Some(flush) = flush_before {
-                        if !flush.is_empty() {
-                            total_len += flush.len();
-                            let f = stream_frame(json!({"type":"stream_token","token":flush,"interaction_id":interaction_id}));
+                        let sanitized = sanitize_chat_token(&flush);
+                        if !sanitized.is_empty() {
+                            total_len += sanitized.len();
+                            let f = stream_frame(json!({"type":"stream_token","token":sanitized,"interaction_id":interaction_id}));
                             send.write_all(&f).await?;
                         }
                     }
@@ -968,13 +1036,16 @@ async fn stream_inference(
 
     // Flush remaining: if inside_rich, treat as chat (incomplete block); else chat
     if !buf.is_empty() {
-        total_len += buf.len();
-        let frame = stream_frame(json!({
-            "type": "stream_token",
-            "token": buf,
-            "interaction_id": interaction_id
-        }));
-        send.write_all(&frame).await?;
+        let sanitized = sanitize_chat_token(&buf);
+        if !sanitized.is_empty() {
+            total_len += sanitized.len();
+            let frame = stream_frame(json!({
+                "type": "stream_token",
+                "token": sanitized,
+                "interaction_id": interaction_id
+            }));
+            send.write_all(&frame).await?;
+        }
     }
 
     // stream_end
