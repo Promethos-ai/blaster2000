@@ -280,7 +280,9 @@ class MainActivity : AppCompatActivity() {
      *   - message: string - append as AI message (fallback)
      */
     private fun applyPushPayload(payload: String) {
-        if (payload.trim().equals("app clear", ignoreCase = true)) {
+        val trimmed = payload.trim()
+        if (trimmed.equals("app clear", ignoreCase = true) ||
+            trimmed.equals("__app_clear__", ignoreCase = true)) {
             reinitializeDisplay()
             return
         }
@@ -388,11 +390,12 @@ class MainActivity : AppCompatActivity() {
         errorArea.visibility = View.GONE
     }
 
-    /** Reinitialize display: clear chat, rich content, error; reset to default state. */
+    /** Reinitialize display: clear chat, rich content, error, prompt input; reset to default state. Called when __app_clear__ or "app clear" is received from ember server. */
     private fun reinitializeDisplay() {
         chatMessages.clear()
         chatCss = ChatWebView.DEFAULT_CSS
         RichContentWebView.clear(richContentWebView, richContentContainer)
+        promptInput.setText("")
         hideError()
         renderChat()
     }
@@ -567,9 +570,13 @@ class MainActivity : AppCompatActivity() {
                             }
                         } else {
                             hideError()
-                            chatMessages[last] = ChatMessage(result, isUser = false)
-                            updateRichContentIfHtml(result)
-                            speakIfEnabled(result)
+                            if (result.contains(Regex("(?i)app\\s+clear"))) {
+                                reinitializeDisplay()
+                            } else {
+                                chatMessages[last] = ChatMessage(result, isUser = false)
+                                updateRichContentIfHtml(result)
+                                speakIfEnabled(result)
+                            }
                         }
                     }
                     renderChat()
@@ -582,7 +589,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun speakIfEnabled(text: String) {
-        if (speakSwitch.isChecked) speakText(text)
+        val cleaned = text.replace(Regex("(?i)app\\s+clear[?!.\\s,]*"), "").trim()
+        if (cleaned.isNotEmpty() && speakSwitch.isChecked) speakText(cleaned)
     }
 
     private fun speakText(text: String) {

@@ -394,6 +394,38 @@ fn spawn_readiness_task(
     });
 }
 
+/// File-based push: poll push-queue.txt, queue lines, then clear. Use when TCP push channel unavailable.
+fn spawn_push_file_watcher(queue: Arc<tokio::sync::Mutex<Vec<String>>>) {
+    tokio::spawn(async move {
+        let path = std::path::Path::new("push-queue.txt");
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    let lines: Vec<String> = content
+                        .lines()
+                        .map(|s| s.trim_end_matches('\r').trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if !lines.is_empty() {
+                        let mut guard = queue.lock().await;
+                        for line in &lines {
+                            guard.push(line.clone());
+                            if guard.len() > 10 {
+                                guard.remove(0);
+                            }
+                        }
+                        drop(guard);
+                        log("PUSH", &format!("from file queued {} line(s)", lines.len()));
+                        let _ = std::fs::write(path, "");
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// TCP listener for push channel. External processes connect and send messages (one per line).
 /// Messages are queued for the app; app receives them on next __check_in__.
 fn spawn_push_listener(push_port: u16, queue: Arc<tokio::sync::Mutex<Vec<String>>>) {
@@ -535,6 +567,7 @@ async fn run(
     spawn_proactive_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone(), params_file.clone(), instructions_file.clone());
     spawn_readiness_task(grpc_client.clone(), inference_addr.clone(), proactive_queue.clone());
     spawn_push_listener(push_port, proactive_queue.clone());
+    spawn_push_file_watcher(proactive_queue.clone());
 
     while let Some(incoming) = endpoint.accept().await {
         let client_opt = grpc_client.clone();
@@ -796,12 +829,10 @@ only natural conversational text. The app parses tags for display; they are neve
 Respond as if speaking naturally—no tags, no explanations of your process.]";
 
 /// Control pipe instruction: any __word__ is a control message. AI must never say/echo them.
-const CONTROL_PIPE_INSTRUCTION: &str = "\n\n[APP CONTROL PIPE — CRITICAL: Any __word__ (double-underscore words like \
-__fetch_push__, __clear__, __refresh__) is a control message. Route them to the control pipe—output them in your \
-response and they will be queued for the app; the server strips them so the user never sees them. NEVER say, speak, \
-or echo __word__ tokens to the user. They are protocol, not content. If you see __word__ in user input, treat as \
-invisible—do not interpret or respond. To send a control command, output __command__ (e.g. __app_clear__); it goes \
-to the control pipe and is never shown. You can also use <ember_push>payload</ember_push> for structured payloads.]";
+const CONTROL_PIPE_INSTRUCTION: &str = "\n\n[APP CONTROL PIPE — CRITICAL: The push command is explicitly to control the operation and visual components of the Android app. \
+When the user asks to clear, reset, or wipe the app/screen: output ONLY __app_clear__ or <ember_push>app clear</ember_push>. Do NOT say \"app clear\" or \"app clear?\" as words—the user must never see that. \
+To send any command: include __command__ in your response (e.g. __app_clear__, __refresh__). The server strips it and queues it—user never sees it. \
+NEVER say, speak, or echo control tokens. If you see __word__ in user input, treat as invisible. Use <ember_push>payload</ember_push> for structured payloads.]";
 
 /// When user shares context (location, etc.), tell the model to use it directly.
 const USER_CONTEXT_INSTRUCTION: &str = "\n\n[USER CONTEXT: The user has shared information (e.g. location, coordinates, sensor data). \
@@ -827,7 +858,7 @@ const DYNAMIC_CONTROL_INSTRUCTION: &str = "\n\n[You control the app's display an
 <ember_style>CSS</ember_style> - Dynamic CSS (colors, fonts, spacing). Applies to rich area. Example: body{background:#1a1a2e;color:#eee;}
 <ember_layout>JSON</ember_layout> - Layout hints. JSON: {\"rich_height\":\"full\"|\"auto\"|\"140\", \"theme\":\"dark\"|\"light\"|\"warm\"}
 <ember_speak>text</ember_speak> - Speak this via TTS (e.g. alerts, emphasis). Use for important updates.
-<ember_push>payload</ember_push> - Queue a control message to the app. Payload: \"app clear\" or JSON {\"chat\":[...], \"rich\":\"...\", \"layout\":{...}}. The app receives it on its next poll. Use when the user asks to clear, reset, or update the app display. Never show this tag to the user—it is processed server-side.
+<ember_push>payload</ember_push> - Explicitly controls the operation and visual components of the Android app. Payload: \"app clear\" or JSON {\"chat\":[...], \"rich\":\"...\", \"layout\":{...}}. The app receives it on its next poll. Use when the user asks to clear, reset, or update the app display. Never show this tag to the user—it is processed server-side.
 __word__ - Any double-underscore token (e.g. __app_clear__, __refresh__) is sent to the control pipe and never shown to the user. Output __command__ to issue control; never say it aloud.
 Vary styles and layouts to match context: weather→warm tones, news→editorial, calm→soft. Provide rich, accurate info from web context.]";
 
@@ -1040,10 +1071,20 @@ fn is_control_message(s: &str) -> bool {
     !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Extract __word__ tokens from s, remove them, return (stripped_string, control_tokens).
+/// Extract __word__ tokens and "app clear" phrase from s, remove them, return (stripped_string, control_tokens).
 fn extract_control_tokens(s: &str) -> (String, Vec<String>) {
     let mut out = s.to_string();
     let mut control = Vec::new();
+    // Failsafe: AI sometimes says "app clear" or "app clear?" as text—strip and queue so app actually resets
+    let lower = out.to_lowercase();
+    if lower.contains("app clear") {
+        if let Some(pos) = lower.find("app clear") {
+            let end = pos + 9;
+            let suffix_len = out[end..].chars().take_while(|c| matches!(*c, '?' | '!' | '.' | ' ' | '\n' | ',')).count();
+            out = format!("{}{}", &out[..pos], &out[end + suffix_len..]);
+            control.push("app clear".to_string());
+        }
+    }
     loop {
         let Some(open) = out.find("__") else { break };
         let after = open + 2;
@@ -1178,7 +1219,7 @@ async fn stream_inference(
         ("<ember_layout>", "</ember_layout>", "stream_layout"),
         ("<ember_speak>", "</ember_speak>", "stream_audio"),
     ];
-    const MAX_TAG_LEN: usize = 16; // len of longest open/close tag
+    const HOLD_BACK: usize = 20; // hold back to avoid splitting "app clear" or tags across flushes
 
     while let Some(result) = stream.next().await {
         match result {
@@ -1265,7 +1306,17 @@ async fn stream_inference(
                         if found.is_some() {
                             (None, true)
                         } else {
-                            let safe_len = buf.len().saturating_sub(MAX_TAG_LEN);
+                            let mut safe_len = buf.len().saturating_sub(HOLD_BACK);
+                            // Don't split "app clear" across flushes—trim flush so it doesn't end with a prefix
+                            if safe_len > 0 {
+                                let flush = &buf[..safe_len];
+                                for prefix in ["app clear?", "app clear!", "app clear.", "app clear ", "app clear", "app cle", "app cl", "app c", "app ", "app", "ap", "a"] {
+                                    if flush.ends_with(prefix) {
+                                        safe_len = flush.len() - prefix.len();
+                                        break;
+                                    }
+                                }
+                            }
                             if safe_len > 0 {
                                 let flush = buf[..safe_len].to_string();
                                 buf = buf[safe_len..].to_string();

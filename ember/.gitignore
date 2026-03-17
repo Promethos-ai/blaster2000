@@ -2,6 +2,7 @@
 .env
 .cursor/mcp.json
 ember-connections.log
+push-queue.txt
 pinggy-win-x64.exe
 pinggy.exe
 pinggy-*.txt
@@ -14,3 +15,6 @@ android/app/build/
 android/loader/build/
 client/android/
 nssm/
+ember-*.apk
+ember-loader-*.apk
+*.log

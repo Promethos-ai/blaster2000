@@ -247,3 +247,11 @@ flowchart LR
     Lib --> Server
     Server --> Feb17
 ```
+
+---
+
+## See Also
+
+- [FEATURES.md](FEATURES.md) — Loader, control pipe, push channel, all features
+- [CONTROL-PIPE.md](CONTROL-PIPE.md) — Control pipe protocol
+- [DEVELOPMENT.md](DEVELOPMENT.md) — Build commands, troubleshooting

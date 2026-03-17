@@ -1,0 +1,209 @@
+# Ember — Features & Functions
+
+Comprehensive documentation of Ember's features, including the Android Loader, control mechanisms, push channel, and more.
+
+---
+
+## 1. Ember Loader (Android app updater)
+
+The **Ember Loader** is a separate Android app that checks for new Ember APK releases and installs them when available.
+
+### How it works
+
+1. **Fetches GitHub releases** — Queries `https://api.github.com/repos/Promethos-ai/blaster2000/releases`
+2. **Finds Ember APK** — Looks for the first asset whose name starts with `ember-` and ends with `.apk`
+3. **Compares versions** — Shows installed vs. latest; enables "Install" if a newer version exists
+4. **Downloads & installs** — On tap, downloads the APK and launches the system installer
+
+### When a new APK is available
+
+- Open the **Ember Loader** app
+- It fetches releases on launch
+- If a newer version exists than what's installed, the **Install** button appears
+- Tap **Install** → APK downloads (progress shown) → system prompts to install
+- After install, the new Ember app is ready
+
+### Loader UI
+
+| State | Display |
+|-------|---------|
+| Checking | Progress spinner, "Checking..." |
+| Up to date | "Up to date", no Install button |
+| Update available | Current vs latest version, **Install** button |
+| Downloading | Progress percentage |
+| Installing | "Installing..." → system install dialog |
+| Errors | Toast + status text (fetch/download/install failed) |
+
+### Building the Loader
+
+```powershell
+# Windows
+cd android
+.\gradlew.bat :loader:assembleRelease
+# APK at android/loader/build/outputs/apk/release/loader-release.apk
+```
+
+```bash
+# Linux/macOS
+cd android
+./gradlew :loader:assembleRelease
+```
+
+### Releasing so the Loader finds it
+
+For the Loader to detect a new Ember APK:
+
+1. **Build** the main app: `.\build-android.ps1`
+2. **Sign** the APK: `.\sign-apk.ps1`
+3. **Create release** with an asset named `ember-{version}.apk` (e.g. `ember-0.1.22.apk`)
+
+```powershell
+# Copy signed APK to expected name, then upload
+Copy-Item android\app\build\outputs\apk\release\app-release-signed.apk ember-0.1.22.apk
+gh release create v0.1.22 ember-0.1.22.apk --repo Promethos-ai/blaster2000 --title "Ember v0.1.22"
+# Or: gh release upload v0.1.22 ember-0.1.22.apk --repo Promethos-ai/blaster2000
+```
+
+### Loader configuration
+
+| Config | Value |
+|--------|-------|
+| GitHub repo | `Promethos-ai/blaster2000` |
+| Ember package | `com.ember.android` |
+| APK name pattern | `ember-*.apk` |
+
+---
+
+## 2. Control pipe & app reset
+
+### Control messages
+
+Any `__word__` pattern is a control message. The server handles them in-process; they never reach the LLM.
+
+| Message | Action |
+|---------|--------|
+| `__get_style__` | Return CSS from server |
+| `__fetch_push__` | Pop from proactive_queue, return payload |
+| `__check_in__` | Proactive check-in (synthetic prompt or queued msg) |
+| `__app_clear__` | App reset (see below) |
+| `__whatever__` | Any other `__word__` → return empty |
+
+### App reset (`app clear` / `__app_clear__`)
+
+When the app receives `"app clear"` or `"__app_clear__"` (from push channel or AI output):
+
+- Clears chat history
+- Clears rich content area
+- Clears prompt input
+- Resets CSS to default
+- Hides error area
+
+**Send via push script:**
+```powershell
+.\push-to-ember.ps1 "app clear"
+```
+
+**AI output:** The AI can output `__app_clear__` or `<ember_push>app clear</ember_push>`; the server strips it; the app receives it on its next poll. If the AI says "app clear" as text, the server has a failsafe and the app also detects it locally.
+
+---
+
+## 3. Push channel
+
+The server exposes a TCP push channel (default port **4434**) so external processes can push messages to the app.
+
+### Push script
+
+```powershell
+# Plain message (appends to chat)
+.\push-to-ember.ps1 "Hello from the server!"
+
+# App reset
+.\push-to-ember.ps1 "app clear"
+
+# Structured payload (JSON)
+.\push-to-ember.ps1 -Payload '{"chat":[{"text":"Hi","isUser":true}],"rich":"<div>Dashboard</div>"}'
+.\push-to-ember.ps1 -PayloadFile payload.json
+```
+
+### Fallback: push-queue.txt
+
+If the TCP push channel is unavailable, the script writes to `push-queue.txt`. The server polls this file every second and queues any lines found.
+
+### Structured payload fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `chat` | `[{text, isUser}, ...]` | Replace entire chat history |
+| `chatCss` | string | CSS for chat area |
+| `rich` | string | HTML for rich content area (top); empty = clear |
+| `richStyle` | string | CSS to inject into rich area |
+| `layout` | `{rich_height, theme}` | Layout hints |
+| `input` | string | Prefill the prompt input |
+| `message` | string | Append as AI message (fallback) |
+
+---
+
+## 4. Android app features
+
+| Feature | Description |
+|---------|-------------|
+| **Streaming chat** | Token-by-token AI responses |
+| **Check-in** | Proactive greeting when user taps "Check in" |
+| **Push polling** | Polls `__fetch_push__` every 25s when in foreground |
+| **TTS** | Optional text-to-speech for AI responses |
+| **Rich content** | WebView for HTML (weather, cards, etc.) |
+| **Voice input** | Microphone for speech-to-text |
+| **Location** | Share location for context |
+| **Error area** | Fixed area for errors (no scroll) |
+| **Display adaptation** | Responsive layouts for different screen sizes |
+
+---
+
+## 5. Server features
+
+| Feature | Description |
+|---------|-------------|
+| **QUIC** | Listens on UDP 4433 |
+| **Push channel** | TCP 4434 for external push |
+| **File push** | Polls `push-queue.txt` every 1s |
+| **Inference params** | Reads `inference_params.json` on every request |
+| **Instructions file** | `--instructions-file` for dynamic behavior |
+| **Web search** | Brave Search via `--web-search` |
+| **Connection log** | `ember-connections.log` |
+
+---
+
+## 6. AI output tags
+
+The AI can use these tags in its output (server strips them):
+
+| Tag | Purpose |
+|-----|---------|
+| `<ember_rich>HTML</ember_rich>` | Display-only content (weather, cards) |
+| `<ember_style>CSS</ember_style>` | Dynamic CSS for rich area |
+| `<ember_layout>JSON</ember_layout>` | Layout hints |
+| `<ember_speak>text</ember_speak>` | TTS (spoken to user) |
+| `<ember_push>payload</ember_push>` | Queue control payload for app |
+| `__command__` | e.g. `__app_clear__` — queued for app |
+
+---
+
+## 7. Build & release scripts
+
+| Script | Purpose |
+|--------|---------|
+| `build-android.ps1` | Build main APK (Rust + Gradle) |
+| `build-android.sh` | Same as above (Linux/macOS) |
+| `sign-apk.ps1` | Sign APK for distribution |
+| `release-android.ps1` | Create GitHub release, upload APK |
+| `push-to-ember.ps1` | Push message to app via server |
+| `push-loader.ps1` | Build loader, push to repo, upload to release |
+
+---
+
+## 8. See also
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture
+- [CONTROL-PIPE.md](CONTROL-PIPE.md) — Control pipe protocol
+- [DEVELOPMENT.md](DEVELOPMENT.md) — Build & troubleshooting
+- [README.md](../README.md) — Quick start

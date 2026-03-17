@@ -61,7 +61,14 @@ try {
     $preview = if ($toSend.Length -gt 60) { $toSend.Substring(0, 60) + "..." } else { $toSend }
     Write-Host "Pushed ($($toSend.Length) chars): $preview" -ForegroundColor Green
 } catch {
-    Write-Host "Failed to push: $_" -ForegroundColor Red
-    Write-Host "Is ember-server running with push channel on ${PushHost}:${Port}?" -ForegroundColor Yellow
-    exit 1
+    # Fallback: write to push-queue.txt (server polls this when TCP push channel unavailable)
+    $pushFile = "push-queue.txt"
+    if (Test-Path $pushFile) {
+        $existing = Get-Content $pushFile -Raw
+        Set-Content $pushFile -Value "$existing$toSend`n" -NoNewline
+    } else {
+        Set-Content $pushFile -Value "$toSend`n"
+    }
+    $preview = if ($toSend.Length -gt 60) { $toSend.Substring(0, 60) + "..." } else { $toSend }
+    Write-Host "TCP push failed; wrote to $pushFile (server polls every 1s): $preview" -ForegroundColor Yellow
 }

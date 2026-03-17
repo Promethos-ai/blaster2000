@@ -61,15 +61,17 @@ Or manually:
 
 ### Ember Loader (check for updates)
 
-A separate **Ember Loader** app fetches GitHub releases and downloads/installs the latest Ember APK. Install it once to keep Ember updated.
+A separate **Ember Loader** app fetches GitHub releases and downloads/installs the latest Ember APK when a new version is available. Install it once to keep Ember updated.
+
+**When a new APK is available:** Open the Loader app → it fetches releases on launch → if a newer version exists, tap **Install** → APK downloads → system prompts to install.
 
 ```powershell
 cd android
-.\gradlew.bat :loader:assembleDebug
-# APK at android/loader/build/outputs/apk/debug/loader-debug.apk
+.\gradlew.bat :loader:assembleRelease
+# APK at android/loader/build/outputs/apk/release/loader-release.apk
 ```
 
-Install the loader APK, then use it to fetch and install new Ember releases.
+Install the loader APK, then use it to fetch and install new Ember releases. For release naming so the Loader finds new APKs, see [docs/FEATURES.md](docs/FEATURES.md#ember-loader-android-app-updater).
 
 ### Run the server
 
@@ -239,9 +241,10 @@ cargo run -p ember-client -- yourname.duckdns.org:4433   # via internet
 
 The client disables certificate verification for development. For production, use proper certificates (e.g. Let’s Encrypt) or pin the server’s certificate.
 
-## Development
+## Documentation
 
-For engineering notes (build commands, troubleshooting), see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+- [docs/FEATURES.md](docs/FEATURES.md) — Loader, control pipe, push channel, all features
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Build commands, troubleshooting
 
 **Before recompiling and relaunching:** Always kill existing processes (grpc_server, ember-server, pinggy, cargo, rustc) and remove file locks (`.cargo-lock` in target dirs). See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#before-recompiling-and-relaunching).
 
