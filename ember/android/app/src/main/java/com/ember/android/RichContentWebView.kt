@@ -58,6 +58,25 @@ object RichContentWebView {
         }
     }
 
+    /** Apply dynamic CSS from AI. Injects into rich area. */
+    fun applyStyle(webView: WebView, css: String) {
+        if (css.isBlank()) return
+        val sanitized = css
+            .replace("javascript:", "")
+            .replace(Regex("<script[^>]*>", RegexOption.IGNORE_CASE), "<!--")
+        webView.post {
+            val escaped = sanitized
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+            webView.evaluateJavascript(
+                "try { var s = document.createElement('style'); s.textContent = '$escaped'; document.head.appendChild(s); } catch(e) {}",
+                null
+            )
+        }
+    }
+
     private fun wrapHtml(bodyContent: String): String {
         if (bodyContent.isBlank()) {
             return """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>$BASE_CSS</style></head><body></body></html>"""

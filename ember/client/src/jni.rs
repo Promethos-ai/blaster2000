@@ -9,6 +9,10 @@ use jni::JNIEnv;
 
 enum StreamItem {
     Token(String),
+    RichContent(String),
+    Style(String),
+    Layout(String),
+    Audio(String),
     Complete(String),
 }
 
@@ -71,9 +75,15 @@ pub extern "system" fn Java_com_ember_android_EmberClient_askStreaming(
     let prompt_str = prompt_str.clone();
     std::thread::spawn(move || {
         let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            crate::ask_ai_streaming(&addr_str, &prompt_str, |token| {
-                let _ = tx.send(Ok(StreamItem::Token(token.to_string())));
-            })
+            crate::ask_ai_streaming_full(
+                &addr_str,
+                &prompt_str,
+                |token| { let _ = tx.send(Ok(StreamItem::Token(token.to_string()))); },
+                |content| { let _ = tx.send(Ok(StreamItem::RichContent(content.to_string()))); },
+                |css| { let _ = tx.send(Ok(StreamItem::Style(css.to_string()))); },
+                |json| { let _ = tx.send(Ok(StreamItem::Layout(json.to_string()))); },
+                |text| { let _ = tx.send(Ok(StreamItem::Audio(text.to_string()))); },
+            )
         }));
         match res {
             Ok(Ok(s)) => { let _ = tx.send(Ok(StreamItem::Complete(s))); }
@@ -96,6 +106,26 @@ pub extern "system" fn Java_com_ember_android_EmberClient_askStreaming(
                     );
                 }
                 result.push_str(&token);
+            }
+            Ok(Ok(StreamItem::RichContent(content))) => {
+                if let Ok(j) = env.new_string(&content) {
+                    let _ = env.call_method(&callback, "onRichContent", "(Ljava/lang/String;)V", &[JValue::Object(&JObject::from(j))]);
+                }
+            }
+            Ok(Ok(StreamItem::Style(css))) => {
+                if let Ok(j) = env.new_string(&css) {
+                    let _ = env.call_method(&callback, "onStyle", "(Ljava/lang/String;)V", &[JValue::Object(&JObject::from(j))]);
+                }
+            }
+            Ok(Ok(StreamItem::Layout(json))) => {
+                if let Ok(j) = env.new_string(&json) {
+                    let _ = env.call_method(&callback, "onLayout", "(Ljava/lang/String;)V", &[JValue::Object(&JObject::from(j))]);
+                }
+            }
+            Ok(Ok(StreamItem::Audio(text))) => {
+                if let Ok(j) = env.new_string(&text) {
+                    let _ = env.call_method(&callback, "onAudio", "(Ljava/lang/String;)V", &[JValue::Object(&JObject::from(j))]);
+                }
             }
             Ok(Ok(StreamItem::Complete(s))) => {
                 result = s;

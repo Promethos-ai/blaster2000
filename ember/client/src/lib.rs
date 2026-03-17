@@ -105,6 +105,30 @@ pub fn ask_ai_streaming<F>(addr_str: &str, prompt: &str, on_token: F) -> Result<
 where
     F: FnMut(&str) + Send,
 {
+    ask_ai_streaming_with_rich(addr_str, prompt, on_token, |_| {})
+}
+
+/// Ask the AI with callbacks for chat tokens and rich HTML (weather, email previews).
+pub fn ask_ai_streaming_with_rich<F, G>(addr_str: &str, prompt: &str, on_token: F, on_rich: G) -> Result<String, String>
+where
+    F: FnMut(&str) + Send,
+    G: FnMut(&str) + Send,
+{
+    ask_ai_streaming_full(addr_str, prompt, on_token, on_rich, |_| {}, |_| {}, |_| {})
+}
+
+/// Ask the AI with full control callbacks: token, rich, style, layout, audio.
+pub fn ask_ai_streaming_full<F, G, H, I, J>(
+    addr_str: &str, prompt: &str,
+    on_token: F, on_rich: G, on_style: H, on_layout: I, on_audio: J,
+) -> Result<String, String>
+where
+    F: FnMut(&str) + Send,
+    G: FnMut(&str) + Send,
+    H: FnMut(&str) + Send,
+    I: FnMut(&str) + Send,
+    J: FnMut(&str) + Send,
+{
     let addrs: Vec<SocketAddr> = addr_str.to_socket_addrs().map_err(|e| {
         let msg = e.to_string();
         if msg.contains("lookup") || msg.contains("hostname") || msg.contains("no address") {
@@ -120,7 +144,7 @@ where
         .or_else(|| addrs.into_iter().next())
         .ok_or_else(|| "Could not resolve address".to_string())?;
     let server_name = extract_host(addr_str);
-    ask_ai_addr_streaming_with_sni(server_addr, server_name, prompt, on_token)
+    ask_ai_addr_streaming_full(server_addr, server_name, prompt, on_token, on_rich, on_style, on_layout, on_audio)
 }
 
 /// Extract host part from "host:port" for TLS SNI.
@@ -147,25 +171,68 @@ fn ask_ai_addr_streaming_with_sni<F>(
 where
     F: FnMut(&str) + Send,
 {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    ask_ai_addr_streaming_with_sni_and_rich(server_addr, server_name, prompt, on_token, |_| {})
+}
 
+fn ask_ai_addr_streaming_with_sni_and_rich<F, G>(
+    server_addr: SocketAddr,
+    server_name: String,
+    prompt: &str,
+    on_token: F,
+    on_rich: G,
+) -> Result<String, String>
+where
+    F: FnMut(&str) + Send,
+    G: FnMut(&str) + Send,
+{
+    ask_ai_addr_streaming_full(server_addr, server_name, prompt, on_token, on_rich, |_| {}, |_| {}, |_| {})
+}
+
+fn ask_ai_addr_streaming_full<F, G, H, I, J>(
+    server_addr: SocketAddr,
+    server_name: String,
+    prompt: &str,
+    on_token: F,
+    on_rich: G,
+    on_style: H,
+    on_layout: I,
+    on_audio: J,
+) -> Result<String, String>
+where
+    F: FnMut(&str) + Send,
+    G: FnMut(&str) + Send,
+    H: FnMut(&str) + Send,
+    I: FnMut(&str) + Send,
+    J: FnMut(&str) + Send,
+{
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
-
-    rt.block_on(async_run_streaming(server_addr, &server_name, prompt, provider, on_token)).map_err(|e| e.to_string())
+    rt.block_on(async_run_streaming(
+        server_addr, &server_name, prompt, provider,
+        on_token, on_rich, on_style, on_layout, on_audio,
+    )).map_err(|e| e.to_string())
 }
 
-async fn async_run_streaming<F>(
+async fn async_run_streaming<F, G, H, I, J>(
     server_addr: SocketAddr,
     server_name: &str,
     prompt: &str,
     provider: Arc<CryptoProvider>,
     on_token: F,
+    on_rich: G,
+    on_style: H,
+    on_layout: I,
+    on_audio: J,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
 where
     F: FnMut(&str) + Send,
+    G: FnMut(&str) + Send,
+    H: FnMut(&str) + Send,
+    I: FnMut(&str) + Send,
+    J: FnMut(&str) + Send,
 {
     let client_config = configure_client(provider)?;
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
@@ -200,7 +267,10 @@ where
     send.write_all(prompt.as_bytes()).await?;
     send.finish()?;
 
-    let result = parse_stream_response::<4096>(&mut recv, TIMEOUT, on_token).await?;
+    let result = parse_stream_response::<4096, _, _, _, _, _>(
+        &mut recv, TIMEOUT,
+        on_token, on_rich, on_style, on_layout, on_audio,
+    ).await?;
 
     connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
@@ -209,13 +279,23 @@ where
 }
 
 /// Parse newline-delimited JSON streaming frames from the ember server.
-/// Calls on_token for each stream_token (for progressive UI updates).
-/// Falls back to raw text if server sends legacy (pre-streaming) format.
-async fn parse_stream_response<const BUF: usize>(
+/// Calls callbacks for each frame type: token (chat), rich (HTML), style (CSS), layout (JSON), audio (TTS).
+async fn parse_stream_response<const BUF: usize, F, G, H, I, J>(
     recv: &mut quinn::RecvStream,
     timeout: std::time::Duration,
-    mut on_token: impl FnMut(&str),
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    mut on_token: F,
+    mut on_rich: G,
+    mut on_style: H,
+    mut on_layout: I,
+    mut on_audio: J,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
+where
+    F: FnMut(&str),
+    G: FnMut(&str),
+    H: FnMut(&str),
+    I: FnMut(&str),
+    J: FnMut(&str),
+{
     let mut buf = Vec::with_capacity(4096);
     let mut result = String::new();
     let mut legacy_mode = false;
@@ -261,6 +341,26 @@ async fn parse_stream_response<const BUF: usize>(
                         if let Some(token) = v.get("token").and_then(|t| t.as_str()) {
                             result.push_str(token);
                             on_token(token);
+                        }
+                    }
+                    "stream_rich" => {
+                        if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
+                            on_rich(content);
+                        }
+                    }
+                    "stream_style" => {
+                        if let Some(css) = v.get("css").and_then(|c| c.as_str()) {
+                            on_style(css);
+                        }
+                    }
+                    "stream_layout" => {
+                        if let Some(json) = v.get("json").and_then(|j| j.as_str()) {
+                            on_layout(json);
+                        }
+                    }
+                    "stream_audio" => {
+                        if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+                            on_audio(text);
                         }
                     }
                     "stream_end" => {

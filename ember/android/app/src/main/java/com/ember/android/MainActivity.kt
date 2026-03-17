@@ -258,6 +258,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Apply layout hints from AI (rich_height, theme). */
+    private fun applyLayout(json: String) {
+        try {
+            val obj = org.json.JSONObject(json.trim())
+            val richHeight = obj.optString("rich_height", "140")
+            val lp = richContentContainer.layoutParams ?: return
+            val heightPx = when (richHeight) {
+                "full" -> (resources.displayMetrics.heightPixels * 0.4).toInt()
+                "auto", "tall" -> (140 * resources.displayMetrics.density).toInt() * 2
+                else -> (140 * resources.displayMetrics.density).toInt()
+            }
+            lp.height = heightPx
+            richContentContainer.layoutParams = lp
+        } catch (_: Exception) {}
+    }
+
     /** Extract HTML block from mixed content (e.g. weather card, email preview). */
     private fun extractHtmlBlock(text: String): String {
         val start = text.indexOf('<')
@@ -309,42 +325,72 @@ class MainActivity : AppCompatActivity() {
                     try {
                         var accumulatedText = ""
                         var hasShownFirstToken = false
-                        EmberClient.askStreaming(addr, prompt, TokenCallback { token ->
-                        accumulatedText += token
-                        val textToShow = accumulatedText
-                        val isFirstToken = !hasShownFirstToken && textToShow.isNotEmpty()
-                        if (isFirstToken) {
-                            hasShownFirstToken = true
-                            runOnUiThread {
-                                if (!isDestroyed) {
-                                    val last = chatMessages.lastIndex
-                                    if (last >= 0 && !chatMessages[last].isUser) {
-                                        chatMessages[last] = ChatMessage(textToShow, isUser = false)
-                                        ChatWebView.updateLastAiMessage(chatWebView, textToShow)
-                                        updateRichContentIfHtml(textToShow)
-                                        scrollToBottom()
-                                    }
-                                }
-                            }
-                        } else {
-                            pendingStreamUpdate?.let { streamUpdateHandler.removeCallbacks(it) }
-                            pendingStreamUpdate = Runnable {
-                                runOnUiThread {
-                                    if (!isDestroyed) {
-                                        val last = chatMessages.lastIndex
-                                        if (last >= 0 && !chatMessages[last].isUser) {
-                                            chatMessages[last] = ChatMessage(textToShow, isUser = false)
-                                            ChatWebView.updateLastAiMessage(chatWebView, textToShow)
-                                            updateRichContentIfHtml(textToShow)
-                                            scrollToBottom()
+                        EmberClient.askStreaming(addr, prompt, object : TokenCallback {
+                            override fun onToken(token: String) {
+                                accumulatedText += token
+                                val textToShow = accumulatedText
+                                val isFirstToken = !hasShownFirstToken && textToShow.isNotEmpty()
+                                if (isFirstToken) {
+                                    hasShownFirstToken = true
+                                    runOnUiThread {
+                                        if (!isDestroyed) {
+                                            val last = chatMessages.lastIndex
+                                            if (last >= 0 && !chatMessages[last].isUser) {
+                                                chatMessages[last] = ChatMessage(textToShow, isUser = false)
+                                                ChatWebView.updateLastAiMessage(chatWebView, textToShow)
+                                                updateRichContentIfHtml(textToShow)
+                                                scrollToBottom()
+                                            }
                                         }
                                     }
+                                } else {
+                                    pendingStreamUpdate?.let { streamUpdateHandler.removeCallbacks(it) }
+                                    pendingStreamUpdate = Runnable {
+                                        runOnUiThread {
+                                            if (!isDestroyed) {
+                                                val last = chatMessages.lastIndex
+                                                if (last >= 0 && !chatMessages[last].isUser) {
+                                                    chatMessages[last] = ChatMessage(textToShow, isUser = false)
+                                                    ChatWebView.updateLastAiMessage(chatWebView, textToShow)
+                                                    updateRichContentIfHtml(textToShow)
+                                                    scrollToBottom()
+                                                }
+                                            }
+                                        }
+                                        pendingStreamUpdate = null
+                                    }
+                                    streamUpdateHandler.postDelayed(pendingStreamUpdate!!, STREAM_UPDATE_DELAY_MS)
                                 }
-                                pendingStreamUpdate = null
                             }
-                            streamUpdateHandler.postDelayed(pendingStreamUpdate!!, STREAM_UPDATE_DELAY_MS)
-                        }
-                    })
+                            override fun onRichContent(content: String) {
+                                runOnUiThread {
+                                    if (!isDestroyed) {
+                                        RichContentWebView.updateContent(richContentWebView, richContentContainer, content)
+                                    }
+                                }
+                            }
+                            override fun onStyle(css: String) {
+                                runOnUiThread {
+                                    if (!isDestroyed) {
+                                        RichContentWebView.applyStyle(richContentWebView, css)
+                                    }
+                                }
+                            }
+                            override fun onLayout(json: String) {
+                                runOnUiThread {
+                                    if (!isDestroyed) {
+                                        applyLayout(json)
+                                    }
+                                }
+                            }
+                            override fun onAudio(text: String) {
+                                runOnUiThread {
+                                    if (!isDestroyed && text.isNotBlank()) {
+                                        speakText(text)
+                                    }
+                                }
+                            }
+                        })
                     } catch (e: Exception) {
                         e.message?.takeIf { it.isNotBlank() } ?: getString(R.string.error_generic)
                     }

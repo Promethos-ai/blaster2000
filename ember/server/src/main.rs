@@ -618,7 +618,18 @@ checking in with you. Generate a warm, brief greeting (2-4 sentences). Mention a
 their attention today: duties, potential issues, or opportunities. Be conversational and supportive. \
 If you don't have specific information, offer a general supportive check-in.";
 
-const WEATHER_FORMAT_INSTRUCTION: &str = "\n\n[When answering weather questions, format your response as a compact HTML weather dashboard. Use only div, span, p, strong, em. No html/body tags—just inner markup. Use cards (div with padding/border), icons as Unicode (☀️ 🌧️ ❄️ 🌤️ ⛈️ 🌫️), and a clear hierarchy. Keep it mobile-friendly.]";
+const WEATHER_FORMAT_INSTRUCTION: &str = "\n\n[When answering weather questions, put the weather dashboard inside <ember_rich>...</ember_rich> tags (display-only, goes to top of app). Use only div, span, p, strong, em. No html/body tags—just inner markup. Use cards (div with padding/border), icons as Unicode (☀️ 🌧️ ❄️ 🌤️ ⛈️ 🌫️), and a clear hierarchy. Keep it mobile-friendly. After the closing </ember_rich>, add a brief conversational summary for the user.]";
+
+/// Instruction for any display-only HTML (weather, email previews, etc.). Content inside <ember_rich> goes to the rich area; content outside is spoken to the user.
+const RICH_CONTENT_INSTRUCTION: &str = "\n\n[For display-only content (weather, email previews, data cards), wrap the HTML in <ember_rich>...</ember_rich>. The app shows that in a dedicated area. Your spoken response goes after </ember_rich>.]";
+
+/// Dynamic control: AI can shape the app experience. Use these tags to control display and audio.
+const DYNAMIC_CONTROL_INSTRUCTION: &str = "\n\n[You control the app's display and audio. Use these tags anytime:
+<ember_rich>HTML</ember_rich> - Display-only content (weather, cards, email previews). Shown in top area.
+<ember_style>CSS</ember_style> - Dynamic CSS (colors, fonts, spacing). Applies to rich area. Example: body{background:#1a1a2e;color:#eee;}
+<ember_layout>JSON</ember_layout> - Layout hints. JSON: {\"rich_height\":\"full\"|\"auto\"|\"140\", \"theme\":\"dark\"|\"light\"|\"warm\"}
+<ember_speak>text</ember_speak> - Speak this via TTS (e.g. alerts, emphasis). Use for important updates.
+Vary styles and layouts to match context: weather→warm tones, news→editorial, calm→soft. Provide rich, accurate info from web context.]";
 
 fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weather: bool) -> String {
     let (system, user_part) = if is_check_in {
@@ -633,7 +644,10 @@ fn format_prompt(user_msg: &str, is_check_in: bool, web_context: &str, is_weathe
     };
     if is_weather {
         system_with_web.push_str(WEATHER_FORMAT_INSTRUCTION);
+    } else if !web_context.is_empty() {
+        system_with_web.push_str(RICH_CONTENT_INSTRUCTION);
     }
+    system_with_web.push_str(DYNAMIC_CONTROL_INSTRUCTION);
     format!(
         "<|im_start|>system\n{system_with_web}<|im_end|>\n<|im_start|>user\n{user_part}<|im_end|>\n<|im_start|>assistant\n"
     )
@@ -848,17 +862,26 @@ async fn stream_inference(
     send.write_all(&frame).await?;
 
     let mut total_len = 0usize;
+    let mut total_rich = 0usize;
     let mut stream = call_inference_stream(grpc_client, inference_addr, prompt, params_file).await?;
+
+    let mut buf = String::new();
+    let mut inside_block: Option<(&str, &str)> = None; // (open_tag, close_tag)
+    const BLOCKS: &[(&str, &str, &str)] = &[
+        ("<ember_rich>", "</ember_rich>", "stream_rich"),
+        ("<ember_style>", "</ember_style>", "stream_style"),
+        ("<ember_layout>", "</ember_layout>", "stream_layout"),
+        ("<ember_speak>", "</ember_speak>", "stream_audio"),
+    ];
+    const MAX_TAG_LEN: usize = 16; // len of longest open/close tag
 
     while let Some(result) = stream.next().await {
         match result {
             Ok(reply) => {
                 let mut token = reply.token;
-                // Strip ChatML special tokens (model may emit these; don't send to client)
                 for tag in ["<|im_end|>", "<|im_start|>", "<|end|>", "<|start|>"] {
                     token = token.replace(tag, "");
                 }
-                // Also strip any <|...|> pattern (handles split tokens)
                 while let Some(start) = token.find("<|") {
                     if let Some(end) = token[start..].find("|>") {
                         token = format!("{}{}", &token[..start], &token[start + end + 2..]);
@@ -869,16 +892,89 @@ async fn stream_inference(
                 if token.is_empty() {
                     continue;
                 }
-                total_len += token.len();
-                let frame = stream_frame(json!({
-                    "type": "stream_token",
-                    "token": token,
-                    "interaction_id": interaction_id
-                }));
-                send.write_all(&frame).await?;
+                buf.push_str(&token);
+
+                loop {
+                    let (flush_before, found_block) = if let Some((open, close)) = inside_block {
+                        if let Some(close_pos) = buf.find(close) {
+                            let content = buf[..close_pos].trim();
+                            let frame_type = BLOCKS.iter().find(|(o, c, _)| *o == open && *c == close).map(|(_, _, t)| *t).unwrap_or("stream_rich");
+                            if !content.is_empty() {
+                                if frame_type == "stream_rich" {
+                                    total_rich += content.len();
+                                    log("RICH", &format!("→ rich area ({} chars)", content.len()));
+                                } else {
+                                    log("CTRL", &format!("→ {} ({} chars)", frame_type, content.len()));
+                                }
+                                let frame = match frame_type {
+                                    "stream_style" => stream_frame(json!({"type":"stream_style","css":content,"interaction_id":interaction_id})),
+                                    "stream_layout" => stream_frame(json!({"type":"stream_layout","json":content,"interaction_id":interaction_id})),
+                                    "stream_audio" => stream_frame(json!({"type":"stream_audio","text":content,"interaction_id":interaction_id})),
+                                    _ => stream_frame(json!({"type":"stream_rich","content":content,"interaction_id":interaction_id})),
+                                };
+                                send.write_all(&frame).await?;
+                            }
+                            buf = buf[close_pos + close.len()..].to_string();
+                            inside_block = None;
+                            (None, true)
+                        } else {
+                            (None, false)
+                        }
+                    } else {
+                        let mut found = None;
+                        for (open, close, _) in BLOCKS {
+                            if let Some(open_pos) = buf.find(open) {
+                                let before = &buf[..open_pos];
+                                if !before.is_empty() {
+                                    total_len += before.len();
+                                    let f = stream_frame(json!({"type":"stream_token","token":before,"interaction_id":interaction_id}));
+                                    send.write_all(&f).await?;
+                                }
+                                buf = buf[open_pos + open.len()..].to_string();
+                                inside_block = Some((open, close));
+                                found = Some(());
+                                break;
+                            }
+                        }
+                        if found.is_some() {
+                            (None, true)
+                        } else {
+                            let safe_len = buf.len().saturating_sub(MAX_TAG_LEN);
+                            if safe_len > 0 {
+                                let flush = buf[..safe_len].to_string();
+                                buf = buf[safe_len..].to_string();
+                                (Some(flush), false)
+                            } else {
+                                (None, false)
+                            }
+                        }
+                    };
+
+                    if let Some(flush) = flush_before {
+                        if !flush.is_empty() {
+                            total_len += flush.len();
+                            let f = stream_frame(json!({"type":"stream_token","token":flush,"interaction_id":interaction_id}));
+                            send.write_all(&f).await?;
+                        }
+                    }
+                    if !found_block {
+                        break;
+                    }
+                }
             }
             Err(e) => return Err(format!("inference stream error: {e}").into()),
         }
+    }
+
+    // Flush remaining: if inside_rich, treat as chat (incomplete block); else chat
+    if !buf.is_empty() {
+        total_len += buf.len();
+        let frame = stream_frame(json!({
+            "type": "stream_token",
+            "token": buf,
+            "interaction_id": interaction_id
+        }));
+        send.write_all(&frame).await?;
     }
 
     // stream_end
@@ -890,8 +986,8 @@ async fn stream_inference(
     send.flush().await?;
     send.finish()?;
 
-    log("SEND", &format!("response stream ({} chars)", total_len));
-    log_connection(conn_log, remote, "RESPONSE", &format!("response_len={}", total_len));
+    log("SEND", &format!("response stream (chat={} rich={})", total_len, total_rich));
+    log_connection(conn_log, remote, "RESPONSE", &format!("response_len={} rich={}", total_len, total_rich));
     Ok(())
 }
 
