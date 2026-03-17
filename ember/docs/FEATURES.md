@@ -4,6 +4,11 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 
 ## Changelog
 
+### v0.1.27
+- **Chat styling** — Pill-shaped bubbles (`border-radius: 9999px`), smaller text (13px), white on black background.
+- **Rich area images** — WebView base URL and mixed content allow external images (e.g. QR from GitHub releases).
+- **Push QR URL** — Default QR image points to v0.1.26 release.
+
 ### v0.1.26
 - **Stay connected** — QUIC idle timeout disabled (was 30s default). Long-poll `__fetch_push__` no longer drops; connection stays alive.
 - **Push QR** — `.\push-to-ember.ps1 "qr"` clears screen and shows QR code in rich area (scan to download APK).
@@ -79,8 +84,8 @@ For the Loader to detect a new Ember APK:
 
 ```powershell
 # Copy signed APK to expected name, then release (includes promqr.png if present)
-Copy-Item android\app\build\outputs\apk\release\app-release.apk ember-0.1.26.apk
-.\release-android.ps1 -Version "v0.1.26" -ApkPath "ember-0.1.26.apk"
+Copy-Item android\app\build\outputs\apk\release\app-release.apk ember-0.1.27.apk
+.\release-android.ps1 -Version "v0.1.27" -ApkPath "ember-0.1.27.apk"
 ```
 
 **QR code download:** Place `promqr.png` in the ember folder. The release script uploads it to every release so users can scan the QR code to download the APK.

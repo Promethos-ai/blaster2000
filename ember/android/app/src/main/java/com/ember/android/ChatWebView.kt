@@ -12,11 +12,11 @@ object ChatWebView {
     val DEFAULT_CSS = """
         * { box-sizing: border-box; }
         html { scroll-behavior: smooth; }
-        body { margin: 0; padding: 12px; padding-bottom: 24px; font-family: system-ui; font-size: 15px; color: #e6edf3; background: #0d1117; -webkit-user-select: text; user-select: text; }
+        body { margin: 0; padding: 12px; padding-bottom: 24px; font-family: system-ui; font-size: 13px; color: #fff; background: #000; -webkit-user-select: text; user-select: text; }
         .chat { width: 100%; max-width: 100%; }
-        .message { margin-bottom: 12px; padding: 12px 16px; border-radius: 12px; word-wrap: break-word; white-space: pre-wrap; }
+        .message { margin-bottom: 10px; padding: 10px 14px; border-radius: 9999px; word-wrap: break-word; white-space: pre-wrap; font-size: 13px; }
         .message.user { margin-left: 24px; margin-right: 0; background: #238636; color: #fff; text-align: right; }
-        .message.ai { margin-left: 0; margin-right: 24px; background: #21262d; color: #e6edf3; }
+        .message.ai { margin-left: 0; margin-right: 24px; background: #000; color: #fff; border: 1px solid #333; }
     """.trimIndent()
 
     fun configure(webView: WebView) {
@@ -24,7 +24,7 @@ object ChatWebView {
             javaScriptEnabled = true
             domStorageEnabled = true
         }
-        webView.setBackgroundColor(0xFFf5ebe0.toInt())
+        webView.setBackgroundColor(0xFF000000.toInt())
     }
 
     fun render(webView: WebView, messages: List<ChatMessage>, css: String) {

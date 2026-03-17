@@ -1,0 +1,12 @@
+---
+description: Never add Cursor attribution to commits
+alwaysApply: true
+---
+
+# No Cursor Attribution
+
+**NEVER** add "Made with Cursor" or any Cursor attribution to git commits.
+
+- Do not use `--trailer "Made-with: Cursor"` or similar
+- Do not append Cursor attribution to commit messages
+- Keep commit messages clean and attribution-free

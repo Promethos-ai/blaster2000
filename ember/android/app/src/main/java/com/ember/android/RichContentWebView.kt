@@ -21,6 +21,7 @@ object RichContentWebView {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
         webView.setBackgroundColor(0)
     }
@@ -29,7 +30,8 @@ object RichContentWebView {
     fun updateContent(webView: WebView, container: View?, html: String) {
         webView.post {
             val wrapped = wrapHtml(html, webView.context)
-            webView.loadDataWithBaseURL(null, wrapped, "text/html", "UTF-8", null)
+            // Use HTTPS base URL so external images (e.g. GitHub release assets) load
+            webView.loadDataWithBaseURL("https://github.com/", wrapped, "text/html", "UTF-8", null)
             container?.visibility = View.VISIBLE
         }
     }
@@ -58,7 +60,7 @@ object RichContentWebView {
     /** Clear content and show Promethos logo placeholder. */
     fun clear(webView: WebView, container: View?) {
         webView.post {
-            webView.loadDataWithBaseURL(null, wrapHtml("", webView.context), "text/html", "UTF-8", null)
+            webView.loadDataWithBaseURL("https://github.com/", wrapHtml("", webView.context), "text/html", "UTF-8", null)
             container?.visibility = View.VISIBLE
         }
     }

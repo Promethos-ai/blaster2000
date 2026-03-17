@@ -23,10 +23,10 @@ object EmberClient {
 
     internal val DEFAULT_CHAT_CSS = """
         * { box-sizing: border-box; }
-        body { margin: 0; padding: 16px; font-family: Georgia, serif; font-size: 16px; line-height: 1.6; color: #2c2416; background: linear-gradient(160deg, #f5ebe0 0%, #e8dcc8 50%, #f0e6d8 100%); -webkit-user-select: text; user-select: text; }
+        body { margin: 0; padding: 12px; font-family: system-ui; font-size: 13px; line-height: 1.5; color: #fff; background: #000; -webkit-user-select: text; user-select: text; }
         .chat { width: 100%; max-width: 100%; }
-        .message { margin-bottom: 16px; padding: 14px 18px; border-radius: 4px; word-wrap: break-word; white-space: pre-wrap; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-        .message.user { margin-left: 48px; margin-right: 0; background: linear-gradient(135deg, #c45c26 0%, #a84818 100%); color: #fff; text-align: right; border-right: 4px solid #8b3a12; }
-        .message.ai { margin-left: 0; margin-right: 48px; background: #fff; color: #2c2416; border-left: 4px solid #c45c26; }
+        .message { margin-bottom: 10px; padding: 10px 14px; border-radius: 9999px; word-wrap: break-word; white-space: pre-wrap; font-size: 13px; }
+        .message.user { margin-left: 24px; margin-right: 0; background: #238636; color: #fff; text-align: right; }
+        .message.ai { margin-left: 0; margin-right: 24px; background: #000; color: #fff; border: 1px solid #333; }
     """.trimIndent()
 }
