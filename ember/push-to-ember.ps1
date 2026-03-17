@@ -5,6 +5,7 @@
 #   .\push-to-ember.ps1 "Plain message"
 #   .\push-to-ember.ps1 "app clear"   # reinitialize display (clear chat, rich content, error)
 #   .\push-to-ember.ps1 "marquee"    # weather + gas marquee (uses last shared location)
+#   .\push-to-ember.ps1 "qr"        # clear screen, show QR code in rich area (scan to download)
 #   .\push-to-ember.ps1 -Payload '{"chat":[{"text":"Hi","isUser":true},{"text":"Hello!","isUser":false}],"rich":"<div>Dashboard</div>"}'
 #   .\push-to-ember.ps1 -PayloadFile payload.json
 #
@@ -24,6 +25,7 @@ param(
     [string]$Message = "",
     [string]$Payload = "",
     [string]$PayloadFile = "",
+    [string]$QrUrl = "",
     [string]$PushHost = "127.0.0.1",
     [int]$Port = 4434
 )
@@ -38,6 +40,11 @@ if ($PayloadFile -ne "") {
     }
 } elseif ($Payload -ne "") {
     $toSend = $Payload
+} elseif ($Message -eq "qr") {
+    $url = if ($QrUrl) { $QrUrl } else { "https://github.com/Promethos-ai/blaster2000/releases/download/v0.1.25/promqr.png" }
+    $richHtml = "<div class=""rich-card"" style=""text-align:center;padding:24px""><img src=""$url"" style=""max-width:100%;max-height:400px;"" alt=""Scan to download"" /></div>"
+    $escaped = $richHtml.Replace('\', '\\').Replace('"', '\"')
+    $toSend = '{"chat":[],"rich":"' + $escaped + '"}'
 } elseif ($Message -ne "") {
     $toSend = $Message
 }

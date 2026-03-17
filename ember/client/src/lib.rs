@@ -85,13 +85,9 @@ fn configure_client(provider: Arc<CryptoProvider>) -> Result<ClientConfig, Box<d
     let mut client_config = ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
     ));
-    // Match server's 90s idle timeout so long-poll __fetch_push__ doesn't drop after 30s
+    // Match server: no idle timeout so long-poll __fetch_push__ never drops
     let mut transport = TransportConfig::default();
-    transport.max_idle_timeout(Some(
-        std::time::Duration::from_secs(90)
-            .try_into()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("idle timeout: {e:?}")))?,
-    ));
+    transport.max_idle_timeout(None);
     client_config.transport_config(Arc::new(transport));
     Ok(client_config)
 }

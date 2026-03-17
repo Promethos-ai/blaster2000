@@ -32,6 +32,14 @@ if ($ApkPath -and (Test-Path $ApkPath)) {
 
 $apkName = [System.IO.Path]::GetFileName($apk)
 Write-Host "Using APK: $apk" -ForegroundColor Cyan
+
+# QR code for download (scan to get APK)
+$promqrPath = Join-Path $rootDir "promqr.png"
+$assets = @($apk)
+if (Test-Path $promqrPath) {
+    $assets += $promqrPath
+    Write-Host "Using QR: $promqrPath" -ForegroundColor Cyan
+}
 Write-Host ""
 
 # Repo root is parent of ember (git root)
@@ -45,7 +53,7 @@ if (-not $repoRoot) {
 $notes = @"
 Ember QUIC client for Android. Connect to your ember server from a smartphone.
 
-**Install:** Copy APK to phone and install (enable 'Install from unknown sources' if needed).
+**Install:** Scan the QR code (promqr.png) or copy APK to phone and install (enable 'Install from unknown sources' if needed).
 
 **Usage:** Enter server address (e.g. 192.168.1.100:4433) and tap Connect.
 
@@ -57,11 +65,11 @@ $notes | Set-Content -Path $notesFile -Encoding UTF8
 Push-Location $repoRoot
 try {
     Write-Host "Creating release $Version..." -ForegroundColor Cyan
-    gh release create $Version --title "Ember Android $Version" --notes-file $notesFile $apk
+    gh release create $Version --title "Ember Android $Version" --notes-file $notesFile @assets
     Write-Host "Release created: $Version" -ForegroundColor Green
 } catch {
     Write-Host "Release may already exist. Trying to upload asset only..." -ForegroundColor Yellow
-    gh release upload $Version $apk
+    gh release upload $Version @assets
     Write-Host "Asset uploaded." -ForegroundColor Green
 } finally {
     Pop-Location

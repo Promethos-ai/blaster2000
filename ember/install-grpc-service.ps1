@@ -10,7 +10,10 @@ $ErrorActionPreference = "Stop"
 $serviceName = "EmberGrpcServer"
 $feb17Dir = "d:\rust\Feb17"
 $nssmDir = "d:\rust\ember\nssm"
-$nssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
+$nssmUrls = @(
+    "https://nssm.cc/release/nssm-2.24.zip",
+    "https://raw.githubusercontent.com/scavin/nssm-2.24/master/nssm-2.24.zip"
+)
 $nssmZip = Join-Path $nssmDir "nssm.zip"
 
 # Resolve grpc_server path (prefer release)
@@ -25,11 +28,26 @@ $grpcExe = if (Test-Path "$feb17Dir\target\release\grpc_server.exe") {
 $logFile = "$feb17Dir\grpc_server.log"
 
 function Ensure-Nssm {
-    $nssmExe = Get-ChildItem $nssmDir -Filter "nssm.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Prefer nssm from PATH (e.g. winget install NSSM.NSSM)
+    $nssmInPath = Get-Command nssm -ErrorAction SilentlyContinue
+    if ($nssmInPath) { return $nssmInPath.Source }
+    $nssmExe = Get-ChildItem $nssmDir -Filter "nssm.exe" -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match "win64" } | Select-Object -First 1
+    if (-not $nssmExe) {
+        $nssmExe = Get-ChildItem $nssmDir -Filter "nssm.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
     if ($nssmExe) { return $nssmExe.FullName }
     Write-Host "Downloading NSSM..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $nssmDir | Out-Null
-    Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip -UseBasicParsing
+    $downloaded = $false
+    foreach ($url in $nssmUrls) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $nssmZip -UseBasicParsing -ErrorAction Stop
+            $downloaded = $true
+            break
+        } catch { Write-Host "  $url failed, trying next..." -ForegroundColor Gray }
+    }
+    if (-not $downloaded) { Write-Error "NSSM download failed from all sources" }
     Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
     $nssmExe = Get-ChildItem $nssmDir -Filter "nssm.exe" -Recurse | Select-Object -First 1
     if (-not $nssmExe) { Write-Error "NSSM download failed" }

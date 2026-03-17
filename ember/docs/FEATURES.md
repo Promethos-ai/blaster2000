@@ -4,6 +4,12 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 
 ## Changelog
 
+### v0.1.26
+- **Stay connected** — QUIC idle timeout disabled (was 30s default). Long-poll `__fetch_push__` no longer drops; connection stays alive.
+- **Push QR** — `.\push-to-ember.ps1 "qr"` clears screen and shows QR code in rich area (scan to download APK).
+- **Rich area outline** — Border stroke increased to 3dp for visibility.
+- **install-grpc-service** — NSSM fallback: uses PATH (winget) or GitHub mirror when nssm.cc is down.
+
 ### v0.1.25
 - **Chat scroll** — Scrolls from bottom up; smooth scroll to newest messages.
 - **Message fade** — Older messages fade as they scroll up (gradient overlay at top).
@@ -72,11 +78,12 @@ For the Loader to detect a new Ember APK:
 3. **Create release** with an asset named `ember-{version}.apk` (e.g. `ember-0.1.25.apk`)
 
 ```powershell
-# Copy signed APK to expected name, then upload
-Copy-Item android\app\build\outputs\apk\release\app-release.apk ember-0.1.25.apk
-gh release create v0.1.25 ember-0.1.25.apk --repo Promethos-ai/blaster2000 --title "Ember v0.1.25"
-# Or: gh release upload v0.1.25 ember-0.1.25.apk --repo Promethos-ai/blaster2000
+# Copy signed APK to expected name, then release (includes promqr.png if present)
+Copy-Item android\app\build\outputs\apk\release\app-release.apk ember-0.1.26.apk
+.\release-android.ps1 -Version "v0.1.26" -ApkPath "ember-0.1.26.apk"
 ```
+
+**QR code download:** Place `promqr.png` in the ember folder. The release script uploads it to every release so users can scan the QR code to download the APK.
 
 ### Loader configuration
 

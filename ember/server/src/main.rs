@@ -666,12 +666,9 @@ fn configure_server() -> Result<ServerConfig, Box<dyn std::error::Error + Send +
 
     let mut server_config = ServerConfig::with_single_cert(vec![cert_der], key_der)?;
     // Long-poll __fetch_push__ holds connections up to 60s; Quinn default idle timeout is 30s.
-    // Increase to 90s so long-poll connections don't time out.
+    // None = infinite idle timeout so long-poll never drops (client must match).
     let mut transport = TransportConfig::default();
-    transport.max_idle_timeout(Some(
-        quinn::IdleTimeout::try_from(std::time::Duration::from_secs(90))
-            .map_err(|e| format!("idle timeout: {e:?}"))?,
-    ));
+    transport.max_idle_timeout(None);
     server_config.transport_config(Arc::new(transport));
     Ok(server_config)
 }
