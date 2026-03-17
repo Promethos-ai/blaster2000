@@ -11,7 +11,8 @@ object ChatWebView {
 
     val DEFAULT_CSS = """
         * { box-sizing: border-box; }
-        body { margin: 0; padding: 12px; font-family: system-ui; font-size: 15px; color: #e6edf3; background: #0d1117; -webkit-user-select: text; user-select: text; }
+        html { scroll-behavior: smooth; }
+        body { margin: 0; padding: 12px; padding-bottom: 24px; font-family: system-ui; font-size: 15px; color: #e6edf3; background: #0d1117; -webkit-user-select: text; user-select: text; }
         .chat { width: 100%; max-width: 100%; }
         .message { margin-bottom: 12px; padding: 12px 16px; border-radius: 12px; word-wrap: break-word; white-space: pre-wrap; }
         .message.user { margin-left: 24px; margin-right: 0; background: #238636; color: #fff; text-align: right; }

@@ -9,7 +9,7 @@ mod ios;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
-use quinn::{ClientConfig, Endpoint};
+use quinn::{ClientConfig, Endpoint, TransportConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::crypto::CryptoProvider;
@@ -82,9 +82,17 @@ fn configure_client(provider: Arc<CryptoProvider>) -> Result<ClientConfig, Box<d
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_no_client_auth();
 
-    let client_config = ClientConfig::new(Arc::new(
+    let mut client_config = ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
     ));
+    // Match server's 90s idle timeout so long-poll __fetch_push__ doesn't drop after 30s
+    let mut transport = TransportConfig::default();
+    transport.max_idle_timeout(Some(
+        std::time::Duration::from_secs(90)
+            .try_into()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("idle timeout: {e:?}")))?,
+    ));
+    client_config.transport_config(Arc::new(transport));
     Ok(client_config)
 }
 

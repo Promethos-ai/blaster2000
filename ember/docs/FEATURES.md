@@ -2,8 +2,14 @@
 
 Comprehensive documentation of Ember's features, including the Android Loader, control mechanisms, push channel, and more.
 
-## Changelog (v0.1.24)
+## Changelog
 
+### v0.1.25
+- **Chat scroll** — Scrolls from bottom up; smooth scroll to newest messages.
+- **Message fade** — Older messages fade as they scroll up (gradient overlay at top).
+- **QUIC idle timeout** — Server idle timeout increased to 90s so long-poll connections don't drop.
+
+### v0.1.24
 - **Long-poll push** — `__fetch_push__` now long-polls: server holds the connection until a push arrives (or 60s timeout). Screen clear and other pushes are delivered immediately instead of waiting up to 5 seconds.
 - **Rich media area** — Bordered with accent blue stroke; shows Promethos logo placeholder when empty (replaces chicken).
 - **Instructions file** — `--instructions-file` content is read on every request; edit `instructions.txt` and changes apply without restart.
@@ -63,13 +69,13 @@ For the Loader to detect a new Ember APK:
 
 1. **Build** the main app: `.\build-android.ps1`
 2. **Sign** the APK: `.\sign-apk.ps1`
-3. **Create release** with an asset named `ember-{version}.apk` (e.g. `ember-0.1.24.apk`)
+3. **Create release** with an asset named `ember-{version}.apk` (e.g. `ember-0.1.25.apk`)
 
 ```powershell
 # Copy signed APK to expected name, then upload
-Copy-Item android\app\build\outputs\apk\release\app-release.apk ember-0.1.24.apk
-gh release create v0.1.24 ember-0.1.24.apk --repo Promethos-ai/blaster2000 --title "Ember v0.1.24"
-# Or: gh release upload v0.1.24 ember-0.1.24.apk --repo Promethos-ai/blaster2000
+Copy-Item android\app\build\outputs\apk\release\app-release.apk ember-0.1.25.apk
+gh release create v0.1.25 ember-0.1.25.apk --repo Promethos-ai/blaster2000 --title "Ember v0.1.25"
+# Or: gh release upload v0.1.25 ember-0.1.25.apk --repo Promethos-ai/blaster2000
 ```
 
 ### Loader configuration
@@ -169,6 +175,7 @@ If the TCP push channel is unavailable, the script writes to `push-queue.txt`. T
 | **Control supervisor** | Long-polls `__fetch_push__` when in foreground; pushes delivered immediately |
 | **TTS** | Optional text-to-speech for AI responses |
 | **Rich content** | WebView for HTML (weather, cards, etc.); bordered area with Promethos logo when empty |
+| **Chat scroll** | Scrolls from bottom up; older messages fade as they scroll up |
 | **Voice input** | Microphone for speech-to-text |
 | **Location** | Share location for context; server fetches local environment (address, nearby parks/water/shops) from coordinates via OSM. Location is remembered for follow-up questions until app clear. |
 | **Error area** | Fixed area for errors (no scroll) |

@@ -17,4 +17,5 @@ client/android/
 nssm/
 ember-*.apk
 ember-loader-*.apk
+app-release-signed.apk
 *.log

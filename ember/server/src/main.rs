@@ -31,7 +31,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use chrono::Utc;
-use quinn::{ClientConfig, Endpoint, Incoming, ServerConfig};
+use quinn::{ClientConfig, Endpoint, Incoming, ServerConfig, TransportConfig};
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
@@ -664,7 +664,15 @@ fn configure_server() -> Result<ServerConfig, Box<dyn std::error::Error + Send +
     let key = PrivatePkcs8KeyDer::from(key_pair.serialize_der());
     let key_der = PrivateKeyDer::try_from(key)?;
 
-    let server_config = ServerConfig::with_single_cert(vec![cert_der], key_der)?;
+    let mut server_config = ServerConfig::with_single_cert(vec![cert_der], key_der)?;
+    // Long-poll __fetch_push__ holds connections up to 60s; Quinn default idle timeout is 30s.
+    // Increase to 90s so long-poll connections don't time out.
+    let mut transport = TransportConfig::default();
+    transport.max_idle_timeout(Some(
+        quinn::IdleTimeout::try_from(std::time::Duration::from_secs(90))
+            .map_err(|e| format!("idle timeout: {e:?}"))?,
+    ));
+    server_config.transport_config(Arc::new(transport));
     Ok(server_config)
 }
 

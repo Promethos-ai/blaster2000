@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/menu_check_in" android:title="@string/check_in" android:icon="@drawable/ic_check_in" />
+    <item android:id="@+id/menu_location" android:title="@string/attach_location" android:icon="@drawable/ic_location" />
+    <item android:id="@+id/menu_camera" android:title="@string/attach_camera" android:icon="@drawable/ic_camera" />
+    <item android:id="@+id/menu_save" android:title="@string/save_chat" android:icon="@drawable/ic_save" />
+</menu>

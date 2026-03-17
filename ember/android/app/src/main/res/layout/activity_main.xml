@@ -69,14 +69,26 @@
             android:padding="8dp" />
     </FrameLayout>
 
-    <!-- Chat: main content, fills space, scrolls -->
-    <WebView
-        android:id="@+id/chat_webview"
+    <!-- Chat: main content, scrolls from bottom up, top fade for older messages -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="@color/background_dark"
-        android:scrollbars="vertical" />
+        android:layout_weight="1">
+
+        <WebView
+            android:id="@+id/chat_webview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/background_dark"
+            android:scrollbars="vertical" />
+
+        <!-- Fade overlay: older messages fade as they scroll up (passes touches through) -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_gravity="top"
+            android:background="@drawable/chat_fade_top" />
+    </FrameLayout>
 
     <!-- Error: minimal, above input -->
     <TextView

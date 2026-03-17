@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="default_server_address">jkazjsnynw.a.pinggy.link:10822</string>
+    <string-array name="server_presets">
+        <item>jkazjsnynw.a.pinggy.link:10822</item>
+        <item>localhost:4433</item>
+        <item>192.168.1.100:4433</item>
+        <item>@string/server_custom</item>
+    </string-array>
 </resources>
