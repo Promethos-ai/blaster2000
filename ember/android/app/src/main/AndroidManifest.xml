@@ -41,7 +41,8 @@
             android:name=".MainActivity"
             android:exported="false"
             android:theme="@style/Theme.Ember"
-            android:configChanges="orientation|screenSize|screenLayout" />
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
+            android:resizeableActivity="true" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

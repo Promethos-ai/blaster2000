@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tablet (7"+) - larger padding and spacing -->
+    <dimen name="padding_screen">24dp</dimen>
+    <dimen name="padding_screen_small">16dp</dimen>
+    <dimen name="spacing_tight">6dp</dimen>
+    <dimen name="spacing_normal">12dp</dimen>
+    <dimen name="spacing_wide">24dp</dimen>
+    <dimen name="header_text_size">24sp</dimen>
+    <dimen name="input_text_size">16sp</dimen>
+    <dimen name="button_text_size">15sp</dimen>
+    <dimen name="button_text_size_small">13sp</dimen>
+    <dimen name="min_touch_target">48dp</dimen>
+    <dimen name="rich_content_height">200dp</dimen>
+    <dimen name="error_area_height">56dp</dimen>
+    <dimen name="max_content_width">600dp</dimen>
+</resources>

@@ -15,11 +15,16 @@ import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ScrollView
 import android.widget.Switch
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +60,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var locationBtn: Button
     private lateinit var cameraBtn: Button
     private lateinit var saveBtn: Button
+    private lateinit var errorArea: ScrollView
+    private lateinit var errorText: TextView
 
     private val chatMessages = mutableListOf<ChatMessage>()
     private var chatCss = ChatWebView.DEFAULT_CSS
@@ -123,6 +130,19 @@ class MainActivity : AppCompatActivity() {
         Log.i(DIAG, "MainActivity - setContentView")
         setContentView(R.layout.activity_main)
 
+        // Edge-to-edge: draw behind system bars, apply insets for cutouts/notches
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        val rootLayout = findViewById<View>(R.id.root_layout)
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            insets
+        }
+
         Log.i(DIAG, "MainActivity - findViewById")
         serverInput = findViewById(R.id.server_address)
         promptInput = findViewById(R.id.prompt_input)
@@ -136,6 +156,8 @@ class MainActivity : AppCompatActivity() {
         locationBtn = findViewById(R.id.location_btn)
         cameraBtn = findViewById(R.id.camera_btn)
         saveBtn = findViewById(R.id.save_btn)
+        errorArea = findViewById(R.id.error_area)
+        errorText = findViewById(R.id.error_text)
         Log.i(DIAG, "MainActivity - all findViewById done")
 
         serverInput.setText(getString(R.string.default_server_address), android.widget.TextView.BufferType.EDITABLE)
@@ -266,8 +288,13 @@ class MainActivity : AppCompatActivity() {
      *   - message: string - append as AI message (fallback)
      */
     private fun applyPushPayload(payload: String) {
+        if (payload.trim().equals("app clear", ignoreCase = true)) {
+            reinitializeDisplay()
+            return
+        }
         if (payload.startsWith("{")) {
             try {
+                hideError()
                 val obj = org.json.JSONObject(payload)
                 if (obj.has("chat")) {
                     chatMessages.clear()
@@ -311,9 +338,7 @@ class MainActivity : AppCompatActivity() {
                 scrollToBottom()
             } catch (e: Exception) {
                 Log.e(TAG, "applyPushPayload parse error", e)
-                chatMessages.add(ChatMessage(payload, isUser = false))
-                renderChat()
-                scrollToBottom()
+                showError(e.message ?: getString(R.string.error_generic))
             }
         } else {
             chatMessages.add(ChatMessage(payload, isUser = false))
@@ -360,6 +385,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun scrollToBottom() {
         chatWebView.evaluateJavascript("window.scrollTo(0, document.body.scrollHeight);", null)
+    }
+
+    private fun showError(msg: String) {
+        errorText.text = msg
+        errorArea.visibility = View.VISIBLE
+    }
+
+    private fun hideError() {
+        errorArea.visibility = View.GONE
+    }
+
+    /** Reinitialize display: clear chat, rich content, error; reset to default state. */
+    private fun reinitializeDisplay() {
+        chatMessages.clear()
+        chatCss = ChatWebView.DEFAULT_CSS
+        RichContentWebView.clear(richContentWebView, richContentContainer)
+        hideError()
+        renderChat()
     }
 
     /** If the text contains HTML (weather, email preview, etc.), show it in the rich content area. */
@@ -429,6 +472,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun doAskAi(addr: String, prompt: String, displayPrompt: String) {
+        hideError()
         RichContentWebView.clear(richContentWebView, richContentContainer)
         chatMessages.add(ChatMessage(displayPrompt, isUser = true))
         chatMessages.add(ChatMessage(getString(R.string.asking), isUser = false))
@@ -522,18 +566,24 @@ class MainActivity : AppCompatActivity() {
                     pendingStreamUpdate = null
                     val last = chatMessages.lastIndex
                     if (last >= 0 && !chatMessages[last].isUser) {
-                        val displayResult = if (result.startsWith("Error: ")) result.removePrefix("Error: ") else result
-                        chatMessages[last] = ChatMessage(displayResult, isUser = false)
-                        updateRichContentIfHtml(displayResult)
+                        if (result.startsWith("Error:")) {
+                            val displayResult = result.removePrefix("Error: ").trim()
+                            showError(displayResult)
+                            chatMessages.removeAt(last)
+                            if (result.contains("warming up") || result.contains("still loading")) {
+                                Toast.makeText(this@MainActivity, getString(R.string.error_model_loading), Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            hideError()
+                            chatMessages[last] = ChatMessage(result, isUser = false)
+                            updateRichContentIfHtml(result)
+                            speakIfEnabled(result)
+                        }
                     }
                     renderChat()
                     askBtn.isEnabled = true
                     checkInBtn.isEnabled = true
                     scrollToBottom()
-                    if (result.startsWith("Error:") && (result.contains("warming up") || result.contains("still loading"))) {
-                        Toast.makeText(this@MainActivity, getString(R.string.error_model_loading), Toast.LENGTH_LONG).show()
-                    }
-                    if (!result.startsWith("Error:")) speakIfEnabled(result)
                 }
             }
         }

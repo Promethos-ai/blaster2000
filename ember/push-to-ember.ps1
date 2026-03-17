@@ -3,6 +3,7 @@
 #
 # Usage:
 #   .\push-to-ember.ps1 "Plain message"
+#   .\push-to-ember.ps1 "app clear"   # reinitialize display (clear chat, rich content, error)
 #   .\push-to-ember.ps1 -Payload '{"chat":[{"text":"Hi","isUser":true},{"text":"Hello!","isUser":false}],"rich":"<div>Dashboard</div>"}'
 #   .\push-to-ember.ps1 -PayloadFile payload.json
 #

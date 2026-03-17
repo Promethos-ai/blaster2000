@@ -19,7 +19,8 @@ git add ember/.gitignore ember/README.md ember/android/settings.gradle.kts ember
 git commit -m "ember: add Ember Loader 0.0.1 - fetches releases, downloads and installs APK"
 git push origin master
 
-$loaderApk = "d:\rust\ember\android\loader\build\outputs\apk\release\loader-release-unsigned.apk"
+$loaderApk = "d:\rust\ember\android\loader\build\outputs\apk\release\loader-release.apk"
+if (-not (Test-Path $loaderApk)) { $loaderApk = "d:\rust\ember\android\loader\build\outputs\apk\release\loader-release-unsigned.apk" }
 if (Test-Path $loaderApk) {
     Copy-Item $loaderApk "d:\rust\ember\ember-loader-0.0.1.apk" -Force
     Write-Host "Uploading loader to release..." -ForegroundColor Cyan

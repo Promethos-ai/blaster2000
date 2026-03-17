@@ -132,6 +132,19 @@ The server reads inference parameters from a JSON file on **every request**, so 
 
 Only include fields you want to change; missing fields keep their defaults. Use a custom path with `--params-file my_config.json`.
 
+### Updating behavior in real time
+
+Use `--instructions-file PATH` to load extra instructions from a file on **every request**. Edit the file between messages to change the AI's behavior without restarting:
+
+```bash
+cargo run -p ember-server -- --instructions-file my_instructions.txt
+```
+
+The file content is appended to the system prompt. Example `my_instructions.txt`:
+```
+Be extra concise today. Avoid lists unless the user asks.
+```
+
 ---
 
 ## iOS App
