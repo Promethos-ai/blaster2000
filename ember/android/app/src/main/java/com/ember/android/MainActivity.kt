@@ -386,13 +386,21 @@ class MainActivity : AppCompatActivity() {
                 playErrorSound()
             }
         } else {
-            chatMessages.add(ChatMessage(payload, isUser = false))
-            renderChat()
-            scrollToBottom()
-            if (payload.startsWith("Error:", ignoreCase = true)) {
-                playErrorSound()
-            } else if (isSpeakEnabled()) {
-                tts?.speak(payload, TextToSpeech.QUEUE_FLUSH, null, null)
+            // Plain text: if it looks like CSS (e.g. raw style pushed by mistake), apply as chatCss
+            if (trimmed.contains("{") && trimmed.contains("}") &&
+                (trimmed.contains("box-sizing") || trimmed.contains("margin") || trimmed.contains("padding") || trimmed.contains("font-family"))) {
+                chatCss = trimmed
+                renderChat()
+                scrollToBottom()
+            } else {
+                chatMessages.add(ChatMessage(payload, isUser = false))
+                renderChat()
+                scrollToBottom()
+                if (payload.startsWith("Error:", ignoreCase = true)) {
+                    playErrorSound()
+                } else if (isSpeakEnabled()) {
+                    tts?.speak(payload, TextToSpeech.QUEUE_FLUSH, null, null)
+                }
             }
         }
     }

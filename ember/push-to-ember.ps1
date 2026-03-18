@@ -51,8 +51,8 @@ if ($PayloadFile -ne "") {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $stylePath = Join-Path $scriptDir "server\chat-style.css"
     if (Test-Path $stylePath) {
-        $css = Get-Content $stylePath -Raw
-        $escaped = $css.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`n", '\n').Replace("`r", '\n')
+        $css = [System.IO.File]::ReadAllText($stylePath)
+        $escaped = $css.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`r", '\n').Replace("`n", '\n')
         $toSend = '{"chatCss":"' + $escaped + '"}'
     } else {
         Write-Host "Style file not found: $stylePath" -ForegroundColor Red
@@ -62,8 +62,8 @@ if ($PayloadFile -ne "") {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $richPath = Join-Path $scriptDir "server\rich-placeholder.html"
     if (Test-Path $richPath) {
-        $html = Get-Content $richPath -Raw
-        $escaped = $html.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`n", '\n').Replace("`r", '\n')
+        $html = [System.IO.File]::ReadAllText($richPath)
+        $escaped = $html.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`r", '\n').Replace("`n", '\n')
         $toSend = '{"rich":"' + $escaped + '"}'
     } else {
         Write-Host "Rich placeholder not found: $richPath" -ForegroundColor Red

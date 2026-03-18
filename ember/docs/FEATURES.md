@@ -4,6 +4,9 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 
 ## Changelog
 
+### v0.1.32
+- **CSS rendering fix** — Raw CSS pushed as plain text is now applied as chatCss instead of shown as chat text. Push script uses proper JSON escaping for style/rich payloads. ChatWebView strips `</style>` from CSS to prevent injection.
+
 ### v0.1.31
 - **Inference timeout live tuning** — Default 120s (was 60s). Server pushes `layout.inference_timeout_sec` on startup; tune via `--inference-timeout-sec` or `.\push-to-ember.ps1 -Payload '{"layout":{"inference_timeout_sec":180}}'`.
 - **Chat scroll** — Always show last response; scroll after load and streaming updates (double RAF for layout readiness).

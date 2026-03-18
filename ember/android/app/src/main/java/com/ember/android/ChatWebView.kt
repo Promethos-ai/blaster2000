@@ -49,7 +49,7 @@ object ChatWebView {
     private fun buildHtml(messages: List<ChatMessage>, css: String): String {
         val sb = StringBuilder()
         sb.append("""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>""")
-        sb.append(css)
+        sb.append(css.replace("</style>", ""))  // Prevent injection from breaking style tag
         sb.append("</style></head><body><div class=\"chat\">")
         for (i in messages.indices) {
             val msg = messages[i]
