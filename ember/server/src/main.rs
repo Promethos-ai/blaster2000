@@ -1,10 +1,13 @@
 //! QUIC bridge to Feb17 inference.
 //! Receives questions from smartphone via QUIC, forwards to Feb17 gRPC over QUIC, returns AI answers.
 //!
-//! Usage: cargo run -p ember-server [-- [--inference ADDR] [--params-file PATH] [--style-file PATH] [--log-file PATH]]
+//! Usage: cargo run -p ember-server [-- [--inference ADDR] [--params-file PATH] [--style-file PATH] [--log-file PATH] [--web-search] [--no-web-search] [--web-search-always]]
 //!   --params-file: JSON file with n_predict, temp, top_p, penalty_repeat, mirostat_tau, etc.
 //!   Edit between requests to fine-tune output; server reads it on every inference.
 //!   Default: inference_params.json
+//!
+//!   Realtime info (Brave web search): Key from BRAVE_API_KEY env, --brave-api-key, or config/search.json
+//!   ({"api_key":"..."}). When set, web search is enabled by default. Use --no-web-search to disable.
 //!
 //! # Control pipe
 //!
@@ -76,6 +79,29 @@ fn default_params() -> InferenceParameters {
         mirostat_eta: Some(0.1),
         ..Default::default()
     }
+}
+
+/// config/search.json (optional): {"api_key": "..."} or {"brave_api_key": "..."}
+#[derive(serde::Deserialize, Default)]
+struct SearchConfig {
+    #[serde(alias = "brave_api_key")]
+    api_key: Option<String>,
+}
+
+fn load_brave_api_key() -> String {
+    if let Ok(k) = std::env::var("BRAVE_API_KEY") {
+        if !k.is_empty() {
+            return k;
+        }
+    }
+    let path = "config/search.json";
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let Ok(cfg) = serde_json::from_str::<SearchConfig>(&content) else {
+        return String::new();
+    };
+    cfg.api_key.unwrap_or_default().trim().to_string()
 }
 
 fn load_inference_params(path: &str) -> InferenceParameters {
@@ -287,6 +313,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             i += 1;
             continue;
         }
+        if args[i] == "--no-web-search" {
+            web_search = false;
+            i += 1;
+            continue;
+        }
         if args[i] == "--web-search-always" {
             web_search_always = true;
             i += 1;
@@ -298,6 +329,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             continue;
         }
         i += 1;
+    }
+
+    // Enable realtime web search by default when BRAVE_API_KEY is set (env, --brave-api-key, or config/search.json)
+    let brave_key = load_brave_api_key();
+    if !brave_key.is_empty() && !args.contains(&"--no-web-search".to_string()) {
+        web_search = true;
     }
 
     let conn_log: Option<Arc<std::sync::Mutex<std::fs::File>>> = log_file.as_ref().and_then(|path| {
@@ -322,9 +359,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let last_coords: Arc<tokio::sync::Mutex<Option<(f64, f64)>>> = Arc::new(tokio::sync::Mutex::new(None));
     let style_file = Arc::new(style_file);
     let params_file = Arc::new(params_file);
-    let brave_key = std::env::var("BRAVE_API_KEY").unwrap_or_default();
     if web_search && brave_key.is_empty() {
-        log_err("SERVER", "BRAVE_API_KEY not set; web search disabled. Set it to enable.");
+        log_err("SERVER", "Brave API key not set; web search disabled. Set BRAVE_API_KEY, config/search.json, or --brave-api-key.");
         log_err("SERVER", "Get a key at https://api.search.brave.com");
     }
     let web_search = Arc::new((web_search, web_search_always, brave_key));
@@ -442,6 +478,13 @@ fn spawn_push_file_watcher(
                                 to_push.push("refresh".to_string());
                                 log("PUSH", "marquee from file (location-based)");
                             } else {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                                    if v.get("type").and_then(|t| t.as_str()) == Some("reminder") {
+                                        if let Some(s) = v.get("summary").and_then(|s| s.as_str()) {
+                                            log("PUSH", &format!("reminder from file: {}", s));
+                                        }
+                                    }
+                                }
                                 to_push.push(line.clone());
                             }
                         }
@@ -791,6 +834,9 @@ async fn handle_stream(
     // Unknown __whatever__ → return empty (no LLM).
     if is_control_message(&prompt) {
         let cmd = prompt.trim().to_lowercase();
+        if cmd == "__test_reminders__" {
+            return handle_test_reminders(send).await;
+        }
         if cmd != "__get_style__" && cmd != "__fetch_push__" && cmd != "__check_in__" {
             log("RECV", &format!("control message (unknown): {}", prompt.trim()));
             let interaction_id = {
@@ -1351,6 +1397,9 @@ fn should_search_web(prompt: &str) -> bool {
     }
     let lower = prompt.to_lowercase();
     let triggers = [
+        // Explicit realtime / search
+        "realtime", "real-time", "live", "search for", "look up", "find out", "current info",
+        "latest info", "search ", "search.", "search?", "look up ", "search the web",
         // Time-sensitive
         "weather", "news", "latest", "today", "current", "now", "recent", "right now",
         "what is happening", "what's happening", "what happened", "breaking", "headlines",
@@ -1362,7 +1411,7 @@ fn should_search_web(prompt: &str) -> bool {
         "who is", "who's", "who won", "when did", "where is", "how much", "what is the",
         "definition of", "meaning of", "capital of", "population of", "time in", "date",
         // Year/recency hints
-        "2024", "2025", "this year", "this month", "this week",
+        "2024", "2025", "2026", "this year", "this month", "this week",
     ];
     triggers.iter().any(|t| lower.contains(t))
 }
@@ -1388,6 +1437,113 @@ fn user_friendly_error(err: &str) -> String {
     } else {
         "Something went wrong. Try again in a moment.".to_string()
     }
+}
+
+/// Run reminder extraction tests and stream JSON results. Control message: __test_reminders__
+async fn handle_test_reminders(mut send: impl tokio::io::AsyncWrite + Unpin) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use Feb17::cognitive_memory::{db, extract_from_structured, extract_reminders, open, PromethosConfig};
+    use std::sync::Arc;
+
+    fn stream_frame(j: serde_json::Value) -> Vec<u8> {
+        let s = serde_json::to_string(&j).unwrap_or_default();
+        format!("{}\n", s).into_bytes()
+    }
+
+    log("RECV", "__test_reminders__");
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    // test_reminder_extract_structured
+    let text = r#"I'll set that up. [REMINDER:summary=Dentist appointment,start=2030-12-25T08:30:00,lead_minutes=60]"#;
+    let intents = extract_from_structured(text);
+    let ok1 = !intents.is_empty() && intents[0].summary == "Dentist appointment" && intents[0].lead_minutes == 60;
+    results.push(serde_json::json!({
+        "test": "test_reminder_extract_structured",
+        "ok": ok1,
+        "intents": intents.len()
+    }));
+
+    // test_reminder_extract_heuristic
+    let user = "I have a dentist appointment tomorrow at 8:30";
+    let ai = "I'll remind you 1 hour before. Remind me 60 minutes before.";
+    let intents2 = extract_reminders(user, ai);
+    let ok2 = !intents2.is_empty() && intents2[0].lead_minutes > 0;
+    results.push(serde_json::json!({
+        "test": "test_reminder_extract_heuristic",
+        "ok": ok2,
+        "intents": intents2.len()
+    }));
+
+    // test_reminder_extract_10am_tomorrow
+    let user3 = "remind me dentist appointment 10 am tomorrow";
+    let ai3 = "I'll set that reminder for you.";
+    let intents3 = extract_reminders(user3, ai3);
+    let ok3 = !intents3.is_empty()
+        && intents3[0].summary.to_lowercase().contains("dentist")
+        && intents3[0].lead_minutes > 0;
+    results.push(serde_json::json!({
+        "test": "test_reminder_extract_10am_tomorrow",
+        "ok": ok3,
+        "intents": intents3.len()
+    }));
+
+    // test_reminder_insert (requires temp DB)
+    let temp = std::env::temp_dir().join("ember_test_reminder");
+    let _ = std::fs::create_dir_all(&temp);
+    let cfg = PromethosConfig::load(&temp);
+    let db_path = cfg.db_path();
+    let _ = std::fs::create_dir_all(db_path.parent().unwrap());
+    let _ = std::fs::remove_file(&db_path);
+    let ok4 = if let Ok(conn) = open(&db_path, &cfg) {
+        conn.execute(
+            r#"INSERT INTO interactions (timestamp_utc, date, user_query, ai_response, session_id) VALUES (?1, ?2, ?3, ?4, ?5)"#,
+            rusqlite::params![3000i64, "2026-03-01", "Q", "A", "s1"],
+        ).is_ok()
+            && {
+                let (writer_tx, writer_rx) = std::sync::mpsc::channel();
+                let _h = db::spawn_writer(db_path.clone(), Arc::new(cfg.clone()), writer_rx, None);
+                let _ = writer_tx.send(db::WriteCmd::InsertReminder {
+                    interaction_id: conn.last_insert_rowid(),
+                    summary: "Test reminder".into(),
+                    event_start_utc: 2000000000i64,
+                    trigger_at_utc: 2000000000i64 - 3600,
+                    lead_minutes: 60,
+                });
+                drop(writer_tx);
+                _h.join().is_ok()
+            }
+    } else {
+        false
+    };
+    let _ = std::fs::remove_dir_all(&temp);
+    results.push(serde_json::json!({
+        "test": "test_reminder_insert",
+        "ok": ok4
+    }));
+
+    let payload = serde_json::json!({
+        "type": "reminder_tests",
+        "results": results,
+        "all_ok": results.iter().all(|r| r["ok"].as_bool().unwrap_or(false))
+    });
+
+    let interaction_id = 0u64;
+    send.write_all(&stream_frame(serde_json::json!({
+        "type": "stream_start",
+        "interaction_id": interaction_id
+    }))).await?;
+    send.write_all(&stream_frame(serde_json::json!({
+        "type": "stream_token",
+        "token": payload.to_string(),
+        "interaction_id": interaction_id
+    }))).await?;
+    send.write_all(&stream_frame(serde_json::json!({
+        "type": "stream_end",
+        "interaction_id": interaction_id
+    }))).await?;
+    send.flush().await?;
+    send.finish()?;
+    log("SEND", &format!("reminder_tests ({} ok)", results.iter().filter(|r| r["ok"].as_bool().unwrap_or(false)).count()));
+    Ok(())
 }
 
 /// Returns true if s is exactly __word__ (alphanumeric + underscore between double underscores).
@@ -1582,7 +1738,7 @@ async fn stream_inference(
         ("<ember_layout>", "</ember_layout>", "stream_layout"),
         ("<ember_speak>", "</ember_speak>", "stream_audio"),
     ];
-    const HOLD_BACK: usize = 20; // hold back to avoid splitting "app clear" or tags across flushes
+    const HOLD_BACK: usize = 2; // minimal hold-back for low latency; avoid splitting "app clear" or tags
 
     while let Some(result) = stream.next().await {
         match result {
@@ -1671,6 +1827,7 @@ async fn stream_inference(
                                     total_len += before.len();
                                     let f = stream_frame(json!({"type":"stream_token","token":before,"interaction_id":interaction_id}));
                                     send.write_all(&f).await?;
+                                    send.flush().await?;
                                 }
                                 buf = buf[open_pos + open.len()..].to_string();
                                 inside_block = Some((open, close));
@@ -1736,6 +1893,7 @@ async fn stream_inference(
                             total_len += sanitized.len();
                             let f = stream_frame(json!({"type":"stream_token","token":sanitized,"interaction_id":interaction_id}));
                             send.write_all(&f).await?;
+                            send.flush().await?;
                         }
                     }
                     if !found_block {
@@ -1769,6 +1927,7 @@ async fn stream_inference(
                 "interaction_id": interaction_id
             }));
             send.write_all(&frame).await?;
+            send.flush().await?;
         }
     }
 
@@ -1790,8 +1949,10 @@ type InferenceStream = std::pin::Pin<Box<dyn Stream<Item = Result<CompleteStream
 
 /// Convert a full response into a token stream for real-time UX when the backend
 /// doesn't support streaming. Chunks by words so the client receives progressive updates.
+/// Sanitizes ChatML/special tokens (<|im_end|>, <|im_start|>, etc.) before streaming.
 fn full_response_to_stream(response: String) -> InferenceStream {
-    let tokens: Vec<CompleteStreamReply> = response
+    let sanitized = sanitize_chat_token(&response);
+    let tokens: Vec<CompleteStreamReply> = sanitized
         .split_whitespace()
         .map(|s| CompleteStreamReply {
             token: format!("{s} "),

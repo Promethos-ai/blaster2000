@@ -4,6 +4,14 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 
 ## Changelog
 
+### v0.1.37
+- **Push polling** — Flutter app polls `__fetch_push__` every 30s while in foreground; reminders delivered without backgrounding.
+- **Reminder server log** — Ember server logs reminder text when receiving from push-queue (`reminder from file: <summary>`).
+- **Reminder worker service** — `install-reminder-worker-service.ps1` installs EmberReminderWorker as NSSM service; included in `install-all-services.ps1`.
+
+### v0.1.33
+- **Windows services with auto-restart** — `install-ember-service.ps1`, `install-pinggy-service.ps1`, `install-all-services.ps1`. NSSM restarts on failure (5s delay). grpc service also has auto-restart.
+
 ### v0.1.32
 - **CSS rendering fix** — Raw CSS pushed as plain text is now applied as chatCss instead of shown as chat text. Push script uses proper JSON escaping for style/rich payloads. ChatWebView strips `</style>` from CSS to prevent injection.
 
