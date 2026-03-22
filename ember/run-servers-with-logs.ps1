@@ -33,7 +33,7 @@ while ($waited -lt 120) {
 }
 Write-Host "grpc_server ready." -ForegroundColor Green
 
-$loadBrave = "if (Test-Path '.env') { Get-Content '.env' | ForEach-Object { if (`$_ -match '^\s*BRAVE_API_KEY=(.+)$') { `$env:BRAVE_API_KEY = `$matches[1].Trim() } } }; "
+$loadBrave = "if (Test-Path 'config\search.json') { `$j = Get-Content 'config\search.json' -Raw | ConvertFrom-Json; if (`$j.api_key) { `$env:BRAVE_API_KEY = `$j.api_key } elseif (`$j.brave_api_key) { `$env:BRAVE_API_KEY = `$j.brave_api_key } }; if (-not `$env:BRAVE_API_KEY -and (Test-Path '.env')) { Get-Content '.env' | ForEach-Object { if (`$_ -match '^\s*BRAVE_API_KEY=(.+)$') { `$env:BRAVE_API_KEY = `$matches[1].Trim() } } }; "
 Write-Host "Starting ember-server (log: $emberLog)..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList @(
     "-NoExit",

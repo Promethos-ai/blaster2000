@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ember Stream Frames</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;600&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      color: #58a6ff;
+      font-weight: 600;
+    }
+    .subtitle {
+      font-size: 0.9rem;
+      color: #8b949e;
+      margin-bottom: 1.5rem;
+    }
+    .diagram {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .frame-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-bottom: 2rem;
+    }
+    .frame-box {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+    }
+    .frame-type {
+      min-width: 180px;
+      font-weight: 600;
+      color: #58a6ff;
+    }
+    .frame-payload {
+      color: #8b949e;
+      flex: 1;
+    }
+    .frame-action {
+      min-width: 140px;
+      color: #3fb950;
+      font-size: 0.75rem;
+    }
+    .section {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #21262d;
+      border-radius: 8px;
+      font-size: 0.85rem;
+    }
+    .section h2 {
+      font-size: 1rem;
+      color: #58a6ff;
+      margin-bottom: 0.75rem;
+    }
+    .section table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .section th, .section td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #30363d;
+    }
+    .section th {
+      color: #8b949e;
+      font-weight: 500;
+    }
+    .section code {
+      background: #0d1117;
+      padding: 0.1rem 0.3rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .note {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: #1c2128;
+      border-left: 4px solid #d29922;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      color: #c9d1d9;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ember Stream Frames</h1>
+  <p class="subtitle">Newline-delimited JSON frames (Server → App). Client parses and invokes TokenCallback.</p>
+
+  <div class="diagram">
+    <div class="frame-flow">
+      <div class="frame-box">
+        <span class="frame-type">stream_start</span>
+        <span class="frame-payload">{"type":"stream_start","interaction_id":N}</span>
+        <span class="frame-action">Ignore</span>
+      </div>
+      <div class="frame-box">
+        <span class="frame-type">stream_token</span>
+        <span class="frame-payload">{"type":"stream_token","token":"...","interaction_id":N}</span>
+        <span class="frame-action">onToken() → chat</span>
+      </div>
+      <div class="frame-box">
+        <span class="frame-type">stream_rich</span>
+        <span class="frame-payload">{"type":"stream_rich","content":"&lt;div&gt;...&lt;/div&gt;","interaction_id":N}</span>
+        <span class="frame-action">onRichContent() → rich area</span>
+      </div>
+      <div class="frame-box">
+        <span class="frame-type">stream_style</span>
+        <span class="frame-payload">{"type":"stream_style","css":"...","interaction_id":N}</span>
+        <span class="frame-action">onStyle() → rich CSS</span>
+      </div>
+      <div class="frame-box">
+        <span class="frame-type">stream_layout</span>
+        <span class="frame-payload">{"type":"stream_layout","json":"{...}","interaction_id":N}</span>
+        <span class="frame-action">onLayout() → height, timeout</span>
+      </div>
+      <div class="frame-box">
+        <span class="frame-type">stream_audio</span>
+        <span class="frame-payload">{"type":"stream_audio","text":"...","interaction_id":N}</span>
+        <span class="frame-action">onAudio() → TTS</span>
+      </div>
+      <div class="frame-box">
+        <span class="frame-type">stream_control_payload</span>
+        <span class="frame-payload">{"type":"stream_control_payload","payload":"app clear","interaction_id":N}</span>
+        <span class="frame-action">onControlPayload() → applyPushPayload</span>
+      </div>
+      <div class="frame-box">
+        <span class="frame-type">stream_end</span>
+        <span class="frame-payload">{"type":"stream_end","interaction_id":N}</span>
+        <span class="frame-action">Finish, return result</span>
+      </div>
+      <div class="frame-box">
+        <span class="frame-type">stream_error</span>
+        <span class="frame-payload">{"type":"stream_error","error":"...","interaction_id":N}</span>
+        <span class="frame-action">Show error, stop</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Frame Type Reference</h2>
+      <table>
+        <tr>
+          <th>Type</th>
+          <th>Key Fields</th>
+          <th>Client Callback</th>
+        </tr>
+        <tr>
+          <td><code>stream_token</code></td>
+          <td>token</td>
+          <td>onToken — append to last AI message, batch 80ms</td>
+        </tr>
+        <tr>
+          <td><code>stream_rich</code></td>
+          <td>content (HTML)</td>
+          <td>onRichContent — RichContentWebView.updateContent</td>
+        </tr>
+        <tr>
+          <td><code>stream_style</code></td>
+          <td>css</td>
+          <td>onStyle — RichContentWebView.applyStyle</td>
+        </tr>
+        <tr>
+          <td><code>stream_layout</code></td>
+          <td>json (rich_height, inference_timeout_sec)</td>
+          <td>onLayout — applyLayout</td>
+        </tr>
+        <tr>
+          <td><code>stream_audio</code></td>
+          <td>text</td>
+          <td>onAudio — speakText (TTS)</td>
+        </tr>
+        <tr>
+          <td><code>stream_control_payload</code></td>
+          <td>payload</td>
+          <td>onControlPayload — applyPushPayload (e.g. "app clear")</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="note">
+      <strong>Legacy mode:</strong> If the server sends raw text (no JSON), the client switches to legacy mode: accumulates the entire response and treats it as a single token stream.
+    </div>
+  </div>
+</body>
+</html>

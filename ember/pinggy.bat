@@ -1,1 +1,2 @@
-pinggy.exe -p 443 -R0:127.0.0.1:8443   WERxHARnICY^+udp@pro.pinggy.io
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pinggy.ps1"

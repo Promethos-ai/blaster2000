@@ -7,6 +7,12 @@
 param([switch]$Uninstall)
 
 $ErrorActionPreference = "Stop"
+
+# Require Administrator (NSSM needs it for service install)
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Error "Run as Administrator. Right-click PowerShell -> Run as administrator, then: cd d:\rust\ember; .\install-grpc-service.ps1"
+}
 $serviceName = "EmberGrpcServer"
 $feb17Dir = "d:\rust\Feb17"
 $nssmDir = "d:\rust\ember\nssm"
@@ -66,16 +72,20 @@ if ($Uninstall) {
 
 # Install
 $nssm = Ensure-Nssm
+$wrapperScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "scripts\grpc-wrapper.ps1"
+if (-not (Test-Path $wrapperScript)) { Write-Error "Wrapper not found: $wrapperScript" }
+
 Write-Host "Installing $serviceName as Windows service..." -ForegroundColor Cyan
-Write-Host "  Executable: $grpcExe" -ForegroundColor Gray
+Write-Host "  Wrapper: $wrapperScript (logs crash, NSSM restarts)" -ForegroundColor Gray
 Write-Host "  Log file: $logFile" -ForegroundColor Gray
 
-# Remove if exists (idempotent)
-& $nssm stop $serviceName 2>$null
-& $nssm remove $serviceName confirm 2>$null
+# Remove if exists (idempotent). Suppress "Can't open service!" when service doesn't exist.
+cmd /c "`"$nssm`" stop $serviceName 2>NUL"
+cmd /c "`"$nssm`" remove $serviceName confirm 2>NUL"
 
-# Install with args: --log-file for persistent log
-& $nssm install $serviceName $grpcExe --log-file $logFile
+# Use wrapper: on crash, writes to log and exits so NSSM restarts
+$powershellExe = (Get-Command powershell.exe).Source
+& $nssm install $serviceName $powershellExe "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" $wrapperScript
 & $nssm set $serviceName AppDirectory $feb17Dir
 & $nssm set $serviceName DisplayName "Ember gRPC Inference Server"
 & $nssm set $serviceName Description "Feb17 LLM inference (llama.cpp). Serves on TCP 50051 for ember-server."
@@ -84,11 +94,13 @@ Write-Host "  Log file: $logFile" -ForegroundColor Gray
 & $nssm set $serviceName AppStderr $logFile
 & $nssm set $serviceName AppStdoutCreationDisposition 4
 & $nssm set $serviceName AppStderrCreationDisposition 4
+& $nssm set $serviceName AppExit Default Restart
+& $nssm set $serviceName AppRestartDelay 5000
 
 Write-Host "`nService installed. Starting..." -ForegroundColor Green
 Start-Service $serviceName
 
-Write-Host "`nEmberGrpcServer is now a Windows service." -ForegroundColor Green
+Write-Host "`nEmberGrpcServer is now a Windows service (auto-restart on failure)." -ForegroundColor Green
 Write-Host "  Start:  Start-Service EmberGrpcServer" -ForegroundColor Gray
 Write-Host "  Stop:   Stop-Service EmberGrpcServer" -ForegroundColor Gray
 Write-Host "  Status: Get-Service EmberGrpcServer" -ForegroundColor Gray

@@ -17,8 +17,10 @@ import 'reminder_service.dart' show firebaseMessagingBackgroundHandler, initRemi
 
 /// ---- CONFIG ----
 
-const String kDefaultServerAddr = 'jkazjsnynw.a.pinggy.link:10822';
-const String kWebProxyUrl = 'https://localhost:8443';
+/// Local: 127.0.0.1:4433. Remote: your Pinggy URL (e.g. jkazjsnynw.a.pinggy.link:10822).
+const String kDefaultServerAddr = '127.0.0.1:4433';
+/// Default proxy for web. Use http://localhost:8080 when running proxy with --http (avoids self-signed cert issues).
+const String kWebProxyUrl = 'http://localhost:8080';
 const String _kPinggyApiKeyPref = 'pinggy_api_key';
 const String _kVoiceInputEnabledPref = 'voice_input_enabled';
 const String _kAutoSpeakEnabledPref = 'auto_speak_enabled';
@@ -76,9 +78,11 @@ class EmberClient {
   }
 
   /// Streaming ask: yields tokens as they arrive (web) or full result at end (native).
+  /// Web uses non-streaming /ask to avoid SSE parsing issues; native uses QUIC streaming.
   Stream<String> askStream(String prompt) async* {
     if (kIsWeb) {
-      yield* askViaHttpStream(_serverAddr, prompt, proxyUrl: proxyUrl ?? kWebProxyUrl);
+      final result = await askViaHttp(_serverAddr, prompt, proxyUrl: proxyUrl ?? kWebProxyUrl);
+      yield result;
     } else {
       yield await compute(_askOverQuic, [_serverAddr, prompt]);
     }
@@ -124,6 +128,11 @@ class _ChatMessage {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  FlutterError.onError = (FlutterErrorDetails details) {
+    debugPrint('FlutterError: ${details.exception}');
+    debugPrint('Stack: ${details.stack}');
+    FlutterError.presentError(details);
+  };
   if (!kIsWeb) {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -219,24 +228,35 @@ class _EmberHomePageState extends State<EmberHomePage> with WidgetsBindingObserv
   // Push polling (reminders, etc.)
   bool _pushPollingActive = false;
 
+  // Active reminder shown in persistent banner until dismissed
+  String? _activeReminder;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadPrefs();
-    _initSpeech();
-    _initTts();
+    if (!kIsWeb) {
+      _initSpeech();
+      _initTts();
+    }
   }
 
   Future<void> _initSpeech() async {
-    _speechAvailable = await _speech.initialize();
+    try {
+      _speechAvailable = await _speech.initialize();
+    } catch (_) {
+      _speechAvailable = false;
+    }
     if (mounted) setState(() {});
   }
 
   Future<void> _initTts() async {
-    await _tts.setSpeechRate(0.5);
-    await _tts.setVolume(1.0);
-    await _tts.setPitch(1.0);
+    try {
+      await _tts.setSpeechRate(0.5);
+      await _tts.setVolume(1.0);
+      await _tts.setPitch(1.0);
+    } catch (_) {}
   }
 
   @override
@@ -253,7 +273,7 @@ class _EmberHomePageState extends State<EmberHomePage> with WidgetsBindingObserv
   }
 
   void _startPushPolling() {
-    if (_pushPollingActive || kIsWeb) return;
+    if (_pushPollingActive) return;
     _pushPollingActive = true;
     _pushPollLoop();
   }
@@ -274,23 +294,26 @@ class _EmberHomePageState extends State<EmberHomePage> with WidgetsBindingObserv
   }
 
   Future<void> _loadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _prefs = prefs;
-      _pinggyApiKeyController.text = prefs.getString(_kPinggyApiKeyPref) ?? '';
-      _reminderServerController.text = prefs.getString(_kReminderServerPref) ?? '';
-      _voiceInputEnabled = prefs.getBool(_kVoiceInputEnabledPref) ?? true;
-      _autoSpeakEnabled = prefs.getBool(_kAutoSpeakEnabledPref) ?? false;
-    });
-    await _refreshPinggyUrlIfConfigured(prefs.getString(_kPinggyApiKeyPref) ?? '');
-    final reminderUrl = _reminderServerController.text.trim();
-    if (reminderUrl.isNotEmpty && !kIsWeb) {
-      final base = reminderUrl.contains('://') ? reminderUrl : 'https://$reminderUrl';
-      initReminderPush(serverBaseUrl: base);
-    }
-    if (!kIsWeb) {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        _prefs = prefs;
+        _pinggyApiKeyController.text = prefs.getString(_kPinggyApiKeyPref) ?? '';
+        _reminderServerController.text = prefs.getString(_kReminderServerPref) ?? '';
+        _voiceInputEnabled = prefs.getBool(_kVoiceInputEnabledPref) ?? true;
+        _autoSpeakEnabled = prefs.getBool(_kAutoSpeakEnabledPref) ?? false;
+      });
+      await _refreshPinggyUrlIfConfigured(prefs.getString(_kPinggyApiKeyPref) ?? '');
+      final reminderUrl = _reminderServerController.text.trim();
+      if (reminderUrl.isNotEmpty && !kIsWeb) {
+        final base = reminderUrl.contains('://') ? reminderUrl : 'https://$reminderUrl';
+        initReminderPush(serverBaseUrl: base);
+      }
       _fetchPushOnInit();
       _startPushPolling();
+    } catch (e) {
+      if (mounted) debugPrint('_loadPrefs error: $e');
     }
   }
 
@@ -299,15 +322,19 @@ class _EmberHomePageState extends State<EmberHomePage> with WidgetsBindingObserv
     final addr = _serverController.text.trim();
     if (addr.isEmpty) return;
     try {
-      final result = await compute(_askOverQuic, [addr, '__fetch_push__']);
+      final result = kIsWeb
+          ? await askViaHttp(addr, '__fetch_push__',
+              proxyUrl: _proxyController.text.trim().isNotEmpty ? _proxyController.text.trim() : kWebProxyUrl)
+          : await compute(_askOverQuic, [addr, '__fetch_push__']);
       if (result.isNotEmpty && mounted) {
         try {
           final j = jsonDecode(result) as Map<String, dynamic>?;
           if (j != null && j['type'] == 'reminder') {
             final summary = j['summary'] as String? ?? 'Reminder';
             if (mounted) {
+              setState(() => _activeReminder = summary);
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Reminder: $summary'), duration: const Duration(seconds: 5)),
+                SnackBar(content: Text('Reminder: $summary'), duration: const Duration(seconds: 60)),
               );
             }
           }
@@ -485,6 +512,21 @@ class _EmberHomePageState extends State<EmberHomePage> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
+    if (_prefs == null && kIsWeb) {
+      return Scaffold(
+        backgroundColor: _bgDark,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(color: _accentBlue),
+              const SizedBox(height: 16),
+              Text('Loading...', style: TextStyle(color: _textSecondary)),
+            ],
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ember(push)'),
@@ -507,6 +549,7 @@ class _EmberHomePageState extends State<EmberHomePage> with WidgetsBindingObserv
       body: Column(
         children: [
           if (_showSettings) _buildSettings(),
+          if (_activeReminder != null) _buildReminderBanner(),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -522,6 +565,37 @@ class _EmberHomePageState extends State<EmberHomePage> with WidgetsBindingObserv
             ),
           ),
           _buildInputBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReminderBanner() {
+    final summary = _activeReminder!;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      decoration: BoxDecoration(
+        color: _accentBlue.withValues(alpha: 0.2),
+        border: Border.all(color: _accentBlue.withValues(alpha: 0.5), width: 1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.notifications_active, color: _accentBlue, size: 24),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Reminder: $summary',
+              style: const TextStyle(color: _textPrimary, fontSize: 14),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, color: _textSecondary, size: 20),
+            onPressed: () => setState(() => _activeReminder = null),
+            tooltip: 'Dismiss',
+          ),
         ],
       ),
     );

@@ -126,16 +126,26 @@ class MainActivity : AppCompatActivity() {
                     val name = obj.optString("name", "")
                     val body = obj.optString("body", "")
                     val assets = obj.optJSONArray("assets") ?: continue
+                    // Prefer Flutter APK (voice, TTS, geolocation) over Native APK
+                    var apkUrl: String? = null
+                    var candidateUrl: String? = null
                     for (j in 0 until assets.length()) {
                         val asset = assets.getJSONObject(j)
                         val assetName = asset.optString("name", "")
                         if (assetName.startsWith(APK_NAME_PREFIX) && assetName.endsWith(APK_NAME_SUFFIX)) {
-                            val apkUrl = asset.optString("browser_download_url", "")
-                            if (apkUrl.isNotEmpty()) {
-                                latestRelease = Release(tagName, name, body, apkUrl)
-                                break
+                            val url = asset.optString("browser_download_url", "")
+                            if (url.isNotEmpty()) {
+                                if (assetName.contains("flutter")) {
+                                    apkUrl = url
+                                    break
+                                }
+                                if (candidateUrl == null) candidateUrl = url
                             }
                         }
+                    }
+                    if (apkUrl == null) apkUrl = candidateUrl
+                    if (apkUrl != null) {
+                        latestRelease = Release(tagName, name, body, apkUrl)
                     }
                     if (latestRelease != null) break
                 }

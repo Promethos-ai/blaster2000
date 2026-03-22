@@ -8,6 +8,11 @@ param(
     [switch]$SkipBuild
 )
 
+# Strip 'v' prefix for filenames (e.g. v0.1.38 -> 0.1.38)
+$versionNum = $Version -replace '^v', ''
+$releaseDate = Get-Date -Format "yyyy-MM-dd"
+$nameSuffix = "-$versionNum-$releaseDate"
+
 $ErrorActionPreference = "Stop"
 $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $flutterDir = Join-Path $rootDir "flutter_app"
@@ -50,7 +55,7 @@ if (-not $SkipBuild) {
 
     $apkPath = Join-Path $flutterDir "build\app\outputs\flutter-apk\app-release.apk"
     if ($ndkOk -and (Test-Path $apkPath)) {
-        $destApk = Join-Path $rootDir "ember-flutter-app-release.apk"
+        $destApk = Join-Path $rootDir "ember-flutter$nameSuffix.apk"
         Copy-Item $apkPath $destApk -Force
         $assets += $destApk
         $platformStatus["Android Flutter (APK)"] = "BUILT"
@@ -64,7 +69,7 @@ if (-not $SkipBuild) {
     $nativeApk = Join-Path $rootDir "android\app\build\outputs\apk\release\app-release.apk"
     if (-not (Test-Path $nativeApk)) { $nativeApk = Join-Path $rootDir "android\app\build\outputs\apk\release\app-release-unsigned.apk" }
     if (Test-Path $nativeApk) {
-        $destNative = Join-Path $rootDir "ember-android-app-release.apk"
+        $destNative = Join-Path $rootDir "ember-native$nameSuffix.apk"
         Copy-Item $nativeApk $destNative -Force
         $assets += $destNative
         $platformStatus["Android Native (APK)"] = "BUILT"
@@ -79,7 +84,7 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -eq 0) {
         $webDir = Join-Path $flutterDir "build\web"
         if (Test-Path $webDir) {
-            $webZip = Join-Path $rootDir "ember-flutter-web.zip"
+            $webZip = Join-Path $rootDir "ember-flutter-web$nameSuffix.zip"
             Compress-Archive -Path (Join-Path $webDir "*") -DestinationPath $webZip -Force
             $assets += $webZip
             $platformStatus["Web (zip)"] = "BUILT"
@@ -98,7 +103,7 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -eq 0) {
         $winDir = Join-Path $flutterDir "build\windows\x64\runner\Release"
         if (Test-Path $winDir) {
-            $winZip = Join-Path $rootDir "ember-flutter-windows.zip"
+            $winZip = Join-Path $rootDir "ember-flutter-windows$nameSuffix.zip"
             Compress-Archive -Path (Join-Path $winDir "*") -DestinationPath $winZip -Force
             $assets += $winZip
             $platformStatus["Windows (zip)"] = "BUILT"
@@ -110,14 +115,14 @@ if (-not $SkipBuild) {
     }
     Pop-Location
 } else {
-    # Skip build - collect existing artifacts
-    $apkPath = Join-Path $rootDir "ember-flutter-app-release.apk"
+    # Skip build - collect existing artifacts (match naming: ember-{type}-{version}-{date}.ext)
+    $apkPath = Join-Path $rootDir "ember-flutter$nameSuffix.apk"
     if (Test-Path $apkPath) { $assets += $apkPath; $platformStatus["Android Flutter (APK)"] = "BUILT" }
-    $nativeApk = Join-Path $rootDir "ember-android-app-release.apk"
+    $nativeApk = Join-Path $rootDir "ember-native$nameSuffix.apk"
     if (Test-Path $nativeApk) { $assets += $nativeApk; $platformStatus["Android Native (APK)"] = "BUILT" }
-    $webZip = Join-Path $rootDir "ember-flutter-web.zip"
+    $webZip = Join-Path $rootDir "ember-flutter-web$nameSuffix.zip"
     if (Test-Path $webZip) { $assets += $webZip; $platformStatus["Web (zip)"] = "BUILT" }
-    $winZip = Join-Path $rootDir "ember-flutter-windows.zip"
+    $winZip = Join-Path $rootDir "ember-flutter-windows$nameSuffix.zip"
     if (Test-Path $winZip) { $assets += $winZip; $platformStatus["Windows (zip)"] = "BUILT" }
 }
 
@@ -181,6 +186,6 @@ try {
 
 # Cleanup temp zips only if we built them this run
 if (-not $SkipBuild) {
-    Remove-Item (Join-Path $rootDir "ember-flutter-web.zip") -ErrorAction SilentlyContinue
-    Remove-Item (Join-Path $rootDir "ember-flutter-windows.zip") -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $rootDir "ember-flutter-web$nameSuffix.zip") -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $rootDir "ember-flutter-windows$nameSuffix.zip") -ErrorAction SilentlyContinue
 }

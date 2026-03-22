@@ -254,6 +254,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut inference_timeout_sec: u32 = 120;
     let mut web_search = false;
     let mut web_search_always = false;
+    let mut use_promethos = false;
+    let mut promethos_base = std::path::PathBuf::from(if cfg!(windows) { r"d:\rust\Feb17" } else { "." });
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -328,6 +330,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             i += 2;
             continue;
         }
+        if args[i] == "--promethos" {
+            use_promethos = true;
+            i += 1;
+            continue;
+        }
+        if args[i] == "--promethos-base" && i + 1 < args.len() {
+            promethos_base = std::path::PathBuf::from(&args[i + 1]);
+            i += 2;
+            continue;
+        }
         i += 1;
     }
 
@@ -365,7 +377,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     let web_search = Arc::new((web_search, web_search_always, brave_key));
     let instructions_file = instructions_file.map(Arc::new);
-    run(listen_addr, push_port, inference_addr, conn_log, proactive_queue.clone(), push_notify.clone(), last_coords.clone(), style_file, params_file, instructions_file, inference_timeout_sec, web_search)
+    let promethos: Option<Arc<Feb17::cognitive_memory::Promethos>> = if use_promethos {
+        let p = Feb17::cognitive_memory::Promethos::new(&promethos_base);
+        log("SERVER", &format!("Promethos enabled (base: {})", promethos_base.display()));
+        Some(Arc::new(p))
+    } else {
+        None
+    };
+    run(listen_addr, push_port, inference_addr, conn_log, proactive_queue.clone(), push_notify.clone(), last_coords.clone(), style_file, params_file, instructions_file, inference_timeout_sec, web_search, promethos)
 }
 
 /// Load optional instructions from file. Returns empty string if file missing or unreadable.
@@ -447,13 +466,18 @@ fn spawn_readiness_task(
 }
 
 /// File-based push: poll push-queue.txt, queue lines, then clear. Use when TCP push channel unavailable.
+/// Path: PUSH_QUEUE_FILE env (absolute), or "push-queue.txt" relative to cwd.
 fn spawn_push_file_watcher(
     queue: Arc<tokio::sync::Mutex<Vec<String>>>,
     push_notify: Arc<tokio::sync::Notify>,
     last_coords: Arc<tokio::sync::Mutex<Option<(f64, f64)>>>,
 ) {
+    let path = std::env::var("PUSH_QUEUE_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("push-queue.txt"));
+    let path = Arc::new(path);
     tokio::spawn(async move {
-        let path = std::path::Path::new("push-queue.txt");
+        let path = path.as_path();
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             interval.tick().await;
@@ -656,6 +680,7 @@ async fn run(
     instructions_file: Option<Arc<String>>,
     inference_timeout_sec: u32,
     web_search: Arc<(bool, bool, String)>,
+    promethos: Option<Arc<Feb17::cognitive_memory::Promethos>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server_config = configure_server()?;
     let endpoint = Endpoint::server(server_config, listen_addr)?;
@@ -708,8 +733,9 @@ async fn run(
         let params = params_file.clone();
         let instructions = instructions_file.clone();
         let web = web_search.clone();
+        let prom = promethos.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(incoming, client_opt, addr, log, queue, notify, coords, style, params, instructions, web).await {
+            if let Err(e) = handle_connection(incoming, client_opt, addr, log, queue, notify, coords, style, params, instructions, web, prom).await {
                 log_err("CONN", &format!("error: {e}"));
             }
         });
@@ -752,6 +778,7 @@ async fn handle_connection(
     params_file: Arc<String>,
     instructions_file: Option<Arc<String>>,
     web_search: Arc<(bool, bool, String)>,
+    promethos: Option<Arc<Feb17::cognitive_memory::Promethos>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let connection = incoming.await?;
     let remote = connection.remote_address();
@@ -775,9 +802,10 @@ async fn handle_connection(
         let params = params_file.clone();
         let instructions = instructions_file.clone();
         let web = web_search.clone();
+        let prom = promethos.clone();
         let remote_addr = remote;
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(&mut send, &mut recv, client_opt, addr, &log, queue, notify, coords, style, params, instructions, web, remote_addr).await {
+            if let Err(e) = handle_stream(&mut send, &mut recv, client_opt, addr, &log, queue, notify, coords, style, params, instructions, web, prom, remote_addr).await {
                 log_err("STREAM", &format!("error: {e}"));
             }
         });
@@ -799,6 +827,7 @@ async fn handle_stream(
     params_file: Arc<String>,
     instructions_file: Option<Arc<String>>,
     web_search: Arc<(bool, bool, String)>,
+    promethos: Option<Arc<Feb17::cognitive_memory::Promethos>>,
     remote: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let prompt_bytes = recv.read_to_end(64 * 1024).await?;
@@ -924,6 +953,19 @@ async fn handle_stream(
         send.flush().await?;
         send.finish()?;
         log("SEND", &format!("fetch_push ({} chars)", msg.len()));
+        let response_details = if msg.is_empty() {
+            "fetch_push (empty)".to_string()
+        } else if let Ok(v) = serde_json::from_str::<serde_json::Value>(&msg) {
+            if v.get("type").and_then(|t| t.as_str()) == Some("reminder") {
+                let s = v.get("summary").and_then(|s| s.as_str()).unwrap_or("?");
+                format!("fetch_push reminder: {}", s.replace('\t', " ").replace('\n', " "))
+            } else {
+                format!("fetch_push response_len={}", msg.len())
+            }
+        } else {
+            format!("fetch_push response_len={}", msg.len())
+        };
+        log_connection(conn_log, &remote, "RESPONSE", &response_details);
         return Ok(());
     }
 
@@ -969,7 +1011,7 @@ async fn handle_stream(
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     };
 
-    let result = if is_check_in {
+    let result: Result<Option<String>, _> = if is_check_in {
         let mut q = proactive_queue.lock().await;
         if let Some(msg) = q.pop() {
             drop(q);
@@ -977,7 +1019,7 @@ async fn handle_stream(
         } else {
             let extra = instructions_file.as_ref().map(|p| load_instructions(p)).unwrap_or_default();
             let llm_prompt = format_prompt(&prompt, true, "", false, false, &extra);
-            stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue, &push_notify).await
+            stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue, &push_notify).await.map(Some)
         }
     } else {
         let web_ctx = if web_search.0 && !is_context_only_prompt(&prompt) && (web_search.1 || should_search_web(&prompt)) {
@@ -999,26 +1041,41 @@ async fn handle_stream(
         let is_user_contextual = is_context_only_prompt(&prompt);
         let mut prompt_for_llm = prompt.clone();
         if let Some((lat, lon)) = extract_coordinates(&prompt) {
-            log("LOC", &format!("coordinates {:.4},{:.4} → fetching local env", lat, lon));
+            log("LOC", &format!("coordinates {:.4},{:.4} → WAYPOINT, fetching local env", lat, lon));
+            let maps_url = format!("https://www.google.com/maps?q={},{}", lat, lon);
+            let waypoint_instruction = format!(
+                "[WAYPOINT: User shared coordinates {:.5},{:.5}. Treat this as a destination/waypoint. Remember it. Use it to find services in the area (gas, food, restaurants, pharmacies, etc.) when the user asks. User can explore in Google Maps or Google Earth: {}]\n\n",
+                lat, lon, maps_url
+            );
             if let Some(env) = fetch_local_environment(lat, lon).await {
                 log("LOC", &format!("local env {} chars", env.len()));
                 prompt_for_llm = format!(
-                    "[LOCAL ENVIRONMENT from coordinates: {}]\n\n{}",
-                    env, prompt
+                    "{}[LOCAL ENVIRONMENT at waypoint: {}]\n\n{}",
+                    waypoint_instruction, env, prompt
                 );
+            } else {
+                prompt_for_llm = format!("{}{}", waypoint_instruction, prompt);
             }
         }
         let extra = instructions_file.as_ref().map(|p| load_instructions(p)).unwrap_or_default();
         let llm_prompt = format_prompt(&prompt_for_llm, false, &web_ctx, is_weather, is_user_contextual, &extra);
-        stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue, &push_notify).await
+        stream_inference(send, &grpc_client, &inference_addr, &llm_prompt, interaction_id, conn_log, &remote, &params_file, &proactive_queue, &push_notify).await.map(Some)
     };
 
-    if let Err(e) = result {
-        let err_str = e.to_string();
-        log_err("SEND", &err_str);
-        log_connection(conn_log, &remote, "ERROR", &err_str.replace('\t', " ").replace('\n', " "));
-        let user_msg = user_friendly_error(&err_str);
-        send_stream_error(send, interaction_id, &user_msg).await?;
+    match &result {
+        Ok(Some(ai_response)) => {
+            if let Some(ref p) = promethos {
+                p.record_interaction(&prompt, ai_response, "ember", None, None);
+            }
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            log_err("SEND", &err_str);
+            log_connection(conn_log, &remote, "ERROR", &err_str.replace('\t', " ").replace('\n', " "));
+            let user_msg = user_friendly_error(&err_str);
+            send_stream_error(send, interaction_id, &user_msg).await?;
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -1198,8 +1255,14 @@ async fn brave_search(api_key: &str, query: &str, count: u32) -> String {
     ctx
 }
 
-/// Extract lat, lon from prompt. Matches "lat X, lon Y" or "lat X lon Y" (app format).
+/// Extract lat, lon from prompt.
+/// Matches: "lat X, lon Y" (app format), or raw "lat,lon" (e.g. 40.7128,-74.0060 or 40.7128, -74.0060).
 fn extract_coordinates(prompt: &str) -> Option<(f64, f64)> {
+    // 1. Try raw "lat,lon" or "lat, lon" format (waypoint from user paste)
+    if let Some((lat, lon)) = extract_coordinates_raw(prompt) {
+        return Some((lat, lon));
+    }
+    // 2. App format: "lat X, lon Y" or "lat X lon Y"
     let lower = prompt.to_lowercase();
     let lat_idx = lower.find("lat ")?;
     let rest = &lower[lat_idx + 4..];
@@ -1215,6 +1278,22 @@ fn extract_coordinates(prompt: &str) -> Option<(f64, f64)> {
     let lon: f64 = lon_str.parse().ok()?;
     if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) {
         Some((lat, lon))
+    } else {
+        None
+    }
+}
+
+/// Extract lat, lon from raw coordinate text (e.g. "40.7128,-74.0060" or "40.7128, -74.0060").
+fn extract_coordinates_raw(prompt: &str) -> Option<(f64, f64)> {
+    let re = regex::Regex::new(r"(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)").ok()?;
+    let caps = re.captures(prompt)?;
+    let a: f64 = caps.get(1)?.as_str().parse().ok()?;
+    let b: f64 = caps.get(2)?.as_str().parse().ok()?;
+    // Assume lat,lon order: lat in [-90,90], lon in [-180,180]
+    if (-90.0..=90.0).contains(&a) && (-180.0..=180.0).contains(&b) {
+        Some((a, b))
+    } else if (-90.0..=90.0).contains(&b) && (-180.0..=180.0).contains(&a) {
+        Some((b, a)) // lon,lat order
     } else {
         None
     }
@@ -1322,17 +1401,18 @@ async fn fetch_local_environment(lat: f64, lon: f64) -> Option<String> {
     let display_name = addr.get("display_name")?.as_str()?.to_string();
     let mut parts = vec![format!("Address: {}", display_name)];
 
-    // 2. Overpass: nearby features (500m radius)
+    // 2. Overpass: nearby features and services (500m radius)
     let overpass_query = format!(
         r#"[out:json][timeout:10];(
   node(around:500,{},{})["natural"="water"];
   node(around:500,{},{})["natural"="wood"];
   way(around:500,{},{})["leisure"="park"];
   way(around:500,{},{})["natural"="water"];
-  node(around:500,{},{})["amenity"~"cafe|restaurant|shop"];
-  node(around:500,{},{})["tourism"~"museum|attraction"];
+  node(around:500,{},{})["amenity"~"cafe|restaurant|shop|fuel|pharmacy|bank|hospital|fast_food"];
+  node(around:500,{},{})["tourism"~"museum|attraction|hotel"];
+  node(around:500,{},{})["shop"~"supermarket|convenience"];
 );out center;"#,
-        lat, lon, lat, lon, lat, lon, lat, lon, lat, lon, lat, lon
+        lat, lon, lat, lon, lat, lon, lat, lon, lat, lon, lat, lon, lat, lon
     );
     let overpass_url = "https://overpass-api.de/api/interpreter";
     if let Ok(resp) = client
@@ -1353,6 +1433,7 @@ async fn fetch_local_environment(lat: f64, lon: f64) -> Option<String> {
                         .or(tags.get("leisure"))
                         .or(tags.get("amenity"))
                         .or(tags.get("tourism"))
+                        .or(tags.get("shop"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("place");
                     features.push(format!("{}: {}", kind, name));
@@ -1387,7 +1468,11 @@ fn is_context_only_prompt(prompt: &str) -> bool {
         "__check_in__",
         "__fetch_push__",
     ];
-    context_patterns.iter().any(|p| lower.contains(p))
+    if context_patterns.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+    // Raw coordinate format (e.g. 40.7128,-74.0060) — treat as waypoint context, skip web search
+    extract_coordinates_raw(prompt).is_some()
 }
 
 /// Heuristic: does the prompt likely need real-time web info?
@@ -1440,7 +1525,7 @@ fn user_friendly_error(err: &str) -> String {
 }
 
 /// Run reminder extraction tests and stream JSON results. Control message: __test_reminders__
-async fn handle_test_reminders(mut send: impl tokio::io::AsyncWrite + Unpin) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn handle_test_reminders(send: &mut quinn::SendStream) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use Feb17::cognitive_memory::{db, extract_from_structured, extract_reminders, open, PromethosConfig};
     use std::sync::Arc;
 
@@ -1676,13 +1761,14 @@ async fn send_stream_error(send: &mut quinn::SendStream, interaction_id: u64, er
 }
 
 /// Send a queued proactive message as a stream (no LLM call).
+/// Returns Ok(None) since there is no AI response to record.
 async fn stream_queued_proactive(
     send: &mut quinn::SendStream,
     msg: &str,
     interaction_id: u64,
     conn_log: &Option<Arc<std::sync::Mutex<std::fs::File>>>,
     remote: &SocketAddr,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
     send.write_all(&stream_frame(json!({
         "type": "stream_start",
         "interaction_id": interaction_id
@@ -1702,7 +1788,7 @@ async fn stream_queued_proactive(
     send.finish()?;
     log("SEND", &format!("proactive (queued, {} chars)", msg.len()));
     log_connection(conn_log, remote, "RESPONSE", &format!("response_len={} (queued)", msg.len()));
-    Ok(())
+    Ok(None)
 }
 
 async fn stream_inference(
@@ -1716,7 +1802,7 @@ async fn stream_inference(
     params_file: &str,
     proactive_queue: &Arc<tokio::sync::Mutex<Vec<String>>>,
     push_notify: &Arc<tokio::sync::Notify>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     // stream_start
     let frame = stream_frame(json!({
         "type": "stream_start",
@@ -1726,6 +1812,7 @@ async fn stream_inference(
 
     let mut total_len = 0usize;
     let mut total_rich = 0usize;
+    let mut chat_text = String::new();
     let mut stream = call_inference_stream(grpc_client, inference_addr, prompt, params_file).await?;
 
     let mut buf = String::new();
@@ -1825,6 +1912,7 @@ async fn stream_inference(
                                 let before = sanitize_chat_token(&before_stripped);
                                 if !before.is_empty() {
                                     total_len += before.len();
+                                    chat_text.push_str(&before);
                                     let f = stream_frame(json!({"type":"stream_token","token":before,"interaction_id":interaction_id}));
                                     send.write_all(&f).await?;
                                     send.flush().await?;
@@ -1891,6 +1979,7 @@ async fn stream_inference(
                         let sanitized = sanitize_chat_token(&stripped);
                         if !sanitized.is_empty() {
                             total_len += sanitized.len();
+                            chat_text.push_str(&sanitized);
                             let f = stream_frame(json!({"type":"stream_token","token":sanitized,"interaction_id":interaction_id}));
                             send.write_all(&f).await?;
                             send.flush().await?;
@@ -1921,6 +2010,7 @@ async fn stream_inference(
         let sanitized = sanitize_chat_token(&stripped);
         if !sanitized.is_empty() {
             total_len += sanitized.len();
+            chat_text.push_str(&sanitized);
             let frame = stream_frame(json!({
                 "type": "stream_token",
                 "token": sanitized,
@@ -1942,7 +2032,7 @@ async fn stream_inference(
 
     log("SEND", &format!("response stream (chat={} rich={})", total_len, total_rich));
     log_connection(conn_log, remote, "RESPONSE", &format!("response_len={} rich={}", total_len, total_rich));
-    Ok(())
+    Ok(chat_text)
 }
 
 type InferenceStream = std::pin::Pin<Box<dyn Stream<Item = Result<CompleteStreamReply, tonic::Status>> + Send>>;

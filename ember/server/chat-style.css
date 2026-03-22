@@ -4,8 +4,10 @@
 body {
   margin: 0;
   padding: 12px;
-  padding-bottom: 24px;
+  padding-bottom: 80px;
   font-family: system-ui, sans-serif;
+  color: #fff;
+  background: #000;
   -webkit-user-select: text;
   user-select: text;
 }

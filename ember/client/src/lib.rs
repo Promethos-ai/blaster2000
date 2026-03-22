@@ -3,15 +3,15 @@
 #[cfg(feature = "android")]
 mod jni;
 
-#[cfg(feature = "ios")]
+#[cfg(any(feature = "ios", feature = "flutter"))]
 mod ios;
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-/// Live-tuning: inference stream timeout (seconds). Default 120. Set via EmberClient.setInferenceTimeoutSec().
-static INFERENCE_TIMEOUT_SEC: AtomicU32 = AtomicU32::new(120);
+/// Live-tuning: inference stream timeout (seconds). Default 300 (5 min) for slow model loads. Set via EmberClient.setInferenceTimeoutSec().
+static INFERENCE_TIMEOUT_SEC: AtomicU32 = AtomicU32::new(300);
 
 /// Set inference timeout (seconds). Used for live tuning from server push.
 #[cfg(feature = "android")]
@@ -287,7 +287,7 @@ where
     send.write_all(prompt.as_bytes()).await?;
     send.finish()?;
 
-    let result = parse_stream_response::<4096, _, _, _, _, _, _>(
+    let result = parse_stream_response::<1024, _, _, _, _, _, _>(
         &mut recv, timeout,
         on_token, on_rich, on_style, on_layout, on_audio, on_control,
     ).await?;

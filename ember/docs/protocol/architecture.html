@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ember Protocol Architecture</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;600&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      color: #58a6ff;
+      font-weight: 600;
+    }
+    .subtitle {
+      font-size: 0.9rem;
+      color: #8b949e;
+      margin-bottom: 1.5rem;
+    }
+    .diagram {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    .row {
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .node {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      min-width: 180px;
+      flex: 1;
+    }
+    .node.android { border-left: 4px solid #3fb950; }
+    .node.ember { border-left: 4px solid #58a6ff; }
+    .node.grpc { border-left: 4px solid #a371f7; }
+    .node.push { border-left: 4px solid #d29922; }
+    .node-title {
+      font-weight: 600;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      color: #c9d1d9;
+    }
+    .node-detail {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      color: #8b949e;
+      line-height: 1.7;
+    }
+    .arrow {
+      font-size: 1.25rem;
+      color: #484f58;
+      align-self: center;
+    }
+    .arrow-label {
+      font-size: 0.65rem;
+      color: #6e7681;
+      text-align: center;
+      max-width: 80px;
+    }
+    .conn-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .flow-section {
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #21262d;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      line-height: 1.8;
+    }
+    .flow-section h2 {
+      font-size: 1rem;
+      color: #58a6ff;
+      margin-bottom: 0.5rem;
+    }
+    .flow-section ul {
+      margin-left: 1.25rem;
+      color: #c9d1d9;
+    }
+    .port-badge {
+      display: inline-block;
+      background: #30363d;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      margin-right: 0.25rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ember Protocol Architecture</h1>
+  <p class="subtitle">Android app ↔ ember-server ↔ grpc_server — QUIC, gRPC, and push channels</p>
+
+  <div class="diagram">
+    <div class="row">
+      <div class="node android">
+        <div class="node-title">📱 Android App</div>
+        <div class="node-detail">
+          <span class="port-badge">QUIC client</span><br>
+          <strong>Connect:</strong> host:4433<br>
+          <strong>Send:</strong> prompt (raw UTF-8)<br>
+          <strong>Receive:</strong> newline-JSON stream<br>
+          <strong>Control:</strong> __fetch_push__, __get_style__, __check_in__
+        </div>
+      </div>
+      <div class="conn-block">
+        <span class="arrow">⟷</span>
+        <span class="arrow-label">QUIC/UDP 4433</span>
+      </div>
+      <div class="node ember">
+        <div class="node-title">🖥️ ember-server</div>
+        <div class="node-detail">
+          <span class="port-badge">0.0.0.0:4433</span> QUIC<br>
+          <span class="port-badge">0.0.0.0:4434</span> TCP push<br>
+          <strong>Control pipe:</strong> __word__ in-process<br>
+          <strong>User prompt:</strong> → gRPC inference<br>
+          <strong>proactive_queue</strong> + push_notify
+        </div>
+      </div>
+      <div class="conn-block">
+        <span class="arrow">→</span>
+        <span class="arrow-label">gRPC 50051</span>
+      </div>
+      <div class="node grpc">
+        <div class="node-title">⚙️ grpc_server</div>
+        <div class="node-detail">
+          <span class="port-badge">127.0.0.1:50051</span><br>
+          complete_stream / complete<br>
+          LLM inference (llama.cpp)
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="node push">
+        <div class="node-title">📤 Push Sources</div>
+        <div class="node-detail">
+          <strong>TCP 4434:</strong> External processes, one line = one message<br>
+          <strong>push-queue.txt:</strong> File poll (1s)<br>
+          <strong>Proactive task:</strong> 30 min check-in → LLM<br>
+          <strong>Readiness:</strong> "Ready for inference!"<br>
+          <strong>AI output:</strong> &lt;ember_push&gt;, __command__
+        </div>
+      </div>
+      <div class="conn-block">
+        <span class="arrow">→</span>
+        <span class="arrow-label">proactive_queue</span>
+      </div>
+      <div class="node ember" style="min-width: 200px;">
+        <div class="node-title">📥 App Retrieval</div>
+        <div class="node-detail">
+          App sends <strong>__fetch_push__</strong><br>
+          Server long-polls (60s) until queue has msg<br>
+          Returns payload immediately when pushed
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-section">
+      <h2>Request Flow (User Prompt)</h2>
+      <ul>
+        <li>User types prompt → App sends over QUIC stream</li>
+        <li>Server: not control message → format_prompt → gRPC complete_stream</li>
+        <li>grpc_server streams tokens → ember parses &lt;ember_*&gt;, __command__</li>
+        <li>Server sends stream_start, stream_token, stream_rich, stream_end</li>
+        <li>Client parses JSON lines, invokes TokenCallback (onToken, onRichContent, etc.)</li>
+      </ul>
+    </div>
+
+    <div class="flow-section">
+      <h2>Push Flow</h2>
+      <ul>
+        <li>External: TCP connect to 4434, write "Hello" or "marquee" or JSON</li>
+        <li>Server: push to proactive_queue, push_notify.notify_one()</li>
+        <li>App: __fetch_push__ long-poll wakes, pops message, returns to app</li>
+        <li>App: applyPushPayload() → update chat, rich, layout, or "app clear"</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

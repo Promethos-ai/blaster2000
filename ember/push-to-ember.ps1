@@ -5,6 +5,7 @@
 #   .\push-to-ember.ps1 "Plain message"
 #   .\push-to-ember.ps1 "app clear"   # reinitialize display (clear chat, rich content, error)
 #   .\push-to-ember.ps1 "marquee"    # weather + gas marquee (uses last shared location)
+#   .\push-to-ember.ps1 "nanoose"   # Nanoose Bay 7-day forecast bar (graphical)
 #   .\push-to-ember.ps1 "qr"        # clear screen, show QR code in rich area (scan to download)
 #   .\push-to-ember.ps1 "style"    # push server chat-style.css to app (reload ChatWebView styles at will)
 #   .\push-to-ember.ps1 "rich"     # push server rich-placeholder.html to app (reload rich area)
@@ -67,6 +68,42 @@ if ($PayloadFile -ne "") {
         $toSend = '{"rich":"' + $escaped + '"}'
     } else {
         Write-Host "Rich placeholder not found: $richPath" -ForegroundColor Red
+        exit 1
+    }
+} elseif ($Message -eq "nanoose") {
+    try {
+        $url = "https://api.open-meteo.com/v1/forecast?latitude=49.27&longitude=-124.16&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum&timezone=America/Vancouver"
+        $data = Invoke-RestMethod -Uri $url -TimeoutSec 15
+        $times = $data.daily.time
+        $maxT = $data.daily.temperature_2m_max
+        $minT = $data.daily.temperature_2m_min
+        $codes = $data.daily.weather_code
+        $precip = $data.daily.precipitation_sum
+        $dayNames = @("Sun","Mon","Tue","Wed","Thu","Fri","Sat")
+        function Get-WxIcon($c) {
+            if ($c -le 2) { return "&#9728;" }; if ($c -eq 3) { return "&#9729;" }
+            if ($c -in 45,48) { return "&#127787;" }; if ($c -ge 51 -and $c -le 67) { return "&#9748;" }
+            if ($c -ge 71 -and $c -le 77) { return "&#10052;" }; if ($c -ge 80 -and $c -le 82) { return "&#9928;" }
+            if ($c -ge 95 -and $c -le 99) { return "&#9928;" }; return "&#9729;"
+        }
+        $bars = @()
+        for ($i = 0; $i -lt [Math]::Min(7, $times.Count); $i++) {
+            $d = [DateTime]::Parse($times[$i])
+            $day = $dayNames[$d.DayOfWeek]
+            $icon = Get-WxIcon $codes[$i]
+            $hiF = [int]([double]$maxT[$i] * 9/5 + 32)
+            $loF = [int]([double]$minT[$i] * 9/5 + 32)
+            $p = [double]$precip[$i]
+            $pVal = [math]::Round($p, 1)
+            $pStr = if ($p -gt 0) { " <span style=""font-size:10px;color:#94a3b8"">" + $pVal + "mm</span>" } else { "" }
+            $bars += "<div class=""wx-day"" style=""flex:1;text-align:center;padding:8px 4px;background:rgba(255,255,255,0.04);border-radius:6px;margin:0 2px""><div style=""font-size:11px;color:#94a3b8"">$day</div><div style=""font-size:18px;margin:4px 0"">$icon</div><div style=""font-size:13px;color:#e6edf3"">$hiF°</div><div style=""font-size:11px;color:#64748b"">$loF°</div>$pStr</div>"
+        }
+        $barHtml = $bars -join ""
+        $richHtml = "<div class=""rich-card"" style=""padding:12px""><div style=""font-size:12px;color:#94a3b8;margin-bottom:10px"">Nanoose Bay · 7-day forecast</div><div style=""display:flex;flex-wrap:wrap;gap:4px;align-items:stretch"">$barHtml</div></div>"
+        $escaped = $richHtml.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`r", '\n').Replace("`n", '\n')
+        $toSend = '{"rich":"' + $escaped + '","layout":{"rich_height":"auto"}}'
+    } catch {
+        Write-Host "Nanoose weather fetch failed: $_" -ForegroundColor Red
         exit 1
     }
 } elseif ($Message -ne "") {

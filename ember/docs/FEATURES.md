@@ -8,6 +8,7 @@ Comprehensive documentation of Ember's features, including the Android Loader, c
 - **Push polling** — Flutter app polls `__fetch_push__` every 30s while in foreground; reminders delivered without backgrounding.
 - **Reminder server log** — Ember server logs reminder text when receiving from push-queue (`reminder from file: <summary>`).
 - **Reminder worker service** — `install-reminder-worker-service.ps1` installs EmberReminderWorker as NSSM service; included in `install-all-services.ps1`.
+- **Full reminder pipeline** — Ember server records interactions to Promethos (`--promethos`); `install-promethos-worker-service.ps1` extracts reminders; `install-reminder-worker-service.ps1` delivers to push-queue. `install-all-services.ps1` installs all; `start-servers.ps1` and EmberServer service use `--promethos` by default.
 
 ### v0.1.33
 - **Windows services with auto-restart** — `install-ember-service.ps1`, `install-pinggy-service.ps1`, `install-all-services.ps1`. NSSM restarts on failure (5s delay). grpc service also has auto-restart.

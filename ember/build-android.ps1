@@ -31,8 +31,11 @@ New-Item -ItemType Directory -Force -Path $jniLibs | Out-Null
 
 Push-Location $rootDir
 try {
-    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o $jniLibs build -p ember-client --features android --release
-    if ($LASTEXITCODE -ne 0) { throw "cargo ndk failed" }
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o $jniLibs build -p ember-client --features android --release 2>&1 | ForEach-Object { Write-Host $_ }
+    $ErrorActionPreference = $prevErr
+    if ($LASTEXITCODE -ne 0) { throw "cargo ndk failed (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location
 }

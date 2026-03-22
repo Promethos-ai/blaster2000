@@ -104,6 +104,7 @@ Before any build or run, [kill processes and remove file locks](#before-recompil
 |------|---------|
 | Build server + client | `cargo build -p ember-server -p ember-client` |
 | Build Android APK | `.\build-android.ps1` (Windows) or `./build-android.sh` (Linux/macOS) |
+| Build Flutter APK | `.\build-flutter.ps1` (requires Flutter SDK) |
 | Sign APK | `.\sign-apk.ps1` |
 | Run server | `cargo run -p ember-server` |
 | Run server (TCP inference) | `cargo run -p ember-server -- --inference http://127.0.0.1:50051` |

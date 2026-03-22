@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ember Control Pipe</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;600&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      color: #58a6ff;
+      font-weight: 600;
+    }
+    .subtitle {
+      font-size: 0.9rem;
+      color: #8b949e;
+      margin-bottom: 1.5rem;
+    }
+    .diagram {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .decision-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-bottom: 2rem;
+    }
+    .node {
+      padding: 1rem 1.25rem;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      font-size: 0.9rem;
+    }
+    .node.prompt {
+      border-left: 4px solid #3fb950;
+    }
+    .node.control {
+      border-left: 4px solid #d29922;
+    }
+    .node.llm {
+      border-left: 4px solid #a371f7;
+    }
+    .node-title {
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+      color: #c9d1d9;
+    }
+    .node-detail {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: #8b949e;
+    }
+    .arrow {
+      text-align: center;
+      color: #484f58;
+      font-size: 1.25rem;
+    }
+    .section {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #21262d;
+      border-radius: 8px;
+      font-size: 0.85rem;
+    }
+    .section h2 {
+      font-size: 1rem;
+      color: #58a6ff;
+      margin-bottom: 0.75rem;
+    }
+    .section table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .section th, .section td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #30363d;
+    }
+    .section th {
+      color: #8b949e;
+      font-weight: 500;
+    }
+    .section code {
+      background: #0d1117;
+      padding: 0.1rem 0.3rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .pattern {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: #1c2128;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: #c9d1d9;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ember Control Pipe</h1>
+  <p class="subtitle">__word__ pattern: control messages handled in-process, never forwarded to LLM</p>
+
+  <div class="diagram">
+    <div class="decision-flow">
+      <div class="node prompt">
+        <div class="node-title">App sends prompt</div>
+        <div class="node-detail">Raw UTF-8 over QUIC stream</div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="node control">
+        <div class="node-title">Is __word__ ? (exact match)</div>
+        <div class="node-detail">__get_style__ | __fetch_push__ | __check_in__ | __whatever__</div>
+      </div>
+      <div class="arrow">↓ Yes</div>
+      <div class="node control">
+        <div class="node-title">Control pipe (in-process)</div>
+        <div class="node-detail">
+          __get_style__ → read CSS, return<br>
+          __fetch_push__ → long-poll queue, return payload<br>
+          __check_in__ → queue has msg? stream it : synthetic → LLM<br>
+          __whatever__ → return empty stream
+        </div>
+      </div>
+      <div class="arrow">↓ No (user prompt)</div>
+      <div class="node llm">
+        <div class="node-title">Forward to LLM</div>
+        <div class="node-detail">format_prompt → gRPC complete_stream → stream tokens back</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>App → Server Control Messages</h2>
+      <table>
+        <tr>
+          <th>Message</th>
+          <th>Server Action</th>
+          <th>Reaches LLM?</th>
+        </tr>
+        <tr>
+          <td><code>__get_style__</code></td>
+          <td>Read CSS file, return immediately</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td><code>__fetch_push__</code></td>
+          <td>Pop from proactive_queue (long-poll 60s)</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td><code>__check_in__</code></td>
+          <td>If queue has msg → stream it; else synthetic prompt → LLM</td>
+          <td>Only synthetic</td>
+        </tr>
+        <tr>
+          <td><code>__whatever__</code></td>
+          <td>Any other __word__ → return empty stream</td>
+          <td>No</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>AI → App (Control Pipe)</h2>
+      <p style="margin-bottom: 0.75rem; color: #c9d1d9;">The AI can output control commands. Server strips them from the stream and queues for app.</p>
+      <table>
+        <tr>
+          <th>AI Output</th>
+          <th>Server Action</th>
+          <th>App Receives</th>
+        </tr>
+        <tr>
+          <td><code>__app_clear__</code></td>
+          <td>Strip, queue "__app_clear__"</td>
+          <td>Next __fetch_push__ → applyPushPayload → reinitializeDisplay</td>
+        </tr>
+        <tr>
+          <td><code>&lt;ember_push&gt;app clear&lt;/ember_push&gt;</code></td>
+          <td>Strip, queue "app clear"</td>
+          <td>Same</td>
+        </tr>
+        <tr>
+          <td><code>&lt;ember_push&gt;{"chat":[...]}&lt;/ember_push&gt;</code></td>
+          <td>Strip, queue JSON</td>
+          <td>applyPushPayload → replace chat</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>Pattern Rules</h2>
+      <div class="pattern">
+        __ + word (alphanumeric + underscore) + __<br>
+        Examples: __get_style__, __fetch_push__, __app_clear__, __refresh__
+      </div>
+      <p style="margin-top: 0.75rem; font-size: 0.8rem; color: #8b949e;">
+        The AI is instructed to never say, speak, or echo __word__ tokens. They are protocol, not content.
+      </p>
+    </div>
+  </div>
+</body>
+</html>

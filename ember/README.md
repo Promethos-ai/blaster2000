@@ -77,7 +77,53 @@ Install the loader APK, then use it to fetch and install new Ember releases. For
 
 On your home PC, forward UDP port **4433** and run `cargo run -p ember-server`. Enter your PC's IP (e.g. `192.168.1.100:4433`) in the app.
 
-**Real-time web search (Brave):** Add `--web-search --web-search-always` and set `BRAVE_API_KEY` (in `.env` or env) to enable. Every query fetches current web context before inference. Use `--brave-api-key KEY` to pass the key via CLI. Get a key at [api.search.brave.com](https://api.search.brave.com).
+**Real-time web search (Brave):** Set the API key in `config/search.json` (`{"api_key":"..."}`), or `BRAVE_API_KEY` env, or `--brave-api-key KEY`. When set, web search is enabled by default. Use `--web-search-always` to search every query. Get a key at [api.search.brave.com](https://api.search.brave.com).
+
+---
+
+## Flutter App
+
+A Flutter app is in `flutter_app/`. It uses the same Rust ember-client via Dart FFI (C ABI).
+
+### Prerequisites
+
+- Flutter SDK
+- Rust, cargo-ndk, Android SDK/NDK (same as Android app)
+
+### Build Flutter APK
+
+```powershell
+.\build-flutter.ps1
+```
+
+The APK is at `flutter_app/build/app/outputs/flutter-apk/app-release.apk`.
+
+### Run (debug)
+
+```powershell
+cd flutter_app
+flutter run
+```
+
+### Run web (Chrome)
+
+Browsers cannot use QUIC. Run the HTTP proxy, then the web app:
+
+```powershell
+# Terminal 1: start ember-server and grpc_server (see above)
+.\start-servers.ps1
+
+# Terminal 2: start HTTP/HTTPS proxy (HTTPS on 8443 by default)
+.\start-http-proxy.ps1
+
+# Terminal 3: run Flutter web
+cd flutter_app
+flutter run -d chrome
+```
+
+In the web app, the default **proxy URL** is `https://localhost:8443`. Accept the self-signed cert in your browser when prompted. For plain HTTP, run `.\start-http-proxy.ps1 --http` and use `http://localhost:8080`.
+
+---
 
 ### Push channel (rewrite app content and structure in real time)
 
@@ -245,6 +291,7 @@ The client disables certificate verification for development. For production, us
 ## Documentation
 
 - [docs/FEATURES.md](docs/FEATURES.md) — Loader, control pipe, push channel, all features
+- [docs/protocol/](docs/protocol/README.md) — Protocol & event system diagrams (architecture, push flow, stream frames, control pipe)
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Build commands, troubleshooting
 
 **Before recompiling and relaunching:** Always kill existing processes (grpc_server, ember-server, pinggy, cargo, rustc) and remove file locks (`.cargo-lock` in target dirs). See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#before-recompiling-and-relaunching).

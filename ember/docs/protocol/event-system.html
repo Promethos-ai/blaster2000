@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ember Event System — Push Flow</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;600&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: #0f1419;
+      color: #e6edf3;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      color: #58a6ff;
+      font-weight: 600;
+    }
+    .subtitle {
+      font-size: 0.9rem;
+      color: #8b949e;
+      margin-bottom: 1.5rem;
+    }
+    .diagram {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .flow-diagram {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 2rem;
+    }
+    @media (max-width: 700px) {
+      .flow-diagram { grid-template-columns: 1fr; }
+    }
+    .box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .box.push-source { border-color: #d29922; }
+    .box.queue { border-color: #58a6ff; background: #0d1117; }
+    .box.app { border-color: #3fb950; }
+    .box-title {
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+      color: #c9d1d9;
+    }
+    .box-detail {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      color: #8b949e;
+      line-height: 1.5;
+    }
+    .arrow-down {
+      font-size: 1.5rem;
+      color: #484f58;
+      text-align: center;
+    }
+    .arrow-right {
+      font-size: 1.5rem;
+      color: #484f58;
+      text-align: center;
+    }
+    .section {
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #21262d;
+      border-radius: 8px;
+      font-size: 0.85rem;
+    }
+    .section h2 {
+      font-size: 1rem;
+      color: #58a6ff;
+      margin-bottom: 0.75rem;
+    }
+    .section table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .section th, .section td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #30363d;
+    }
+    .section th {
+      color: #8b949e;
+      font-weight: 500;
+    }
+    .section code {
+      background: #0d1117;
+      padding: 0.1rem 0.3rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+    .timeline-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      font-size: 0.8rem;
+    }
+    .timeline-num {
+      background: #30363d;
+      width: 1.5rem;
+      height: 1.5rem;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 0.7rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ember Event System — Push Flow</h1>
+  <p class="subtitle">proactive_queue, push_notify, __fetch_push__ long-poll, and push sources</p>
+
+  <div class="diagram">
+    <div class="flow-diagram">
+      <div class="box push-source">
+        <div class="box-title">Push Sources</div>
+        <div class="box-detail">
+          TCP 4434<br>
+          push-queue.txt<br>
+          Proactive (30 min)<br>
+          Readiness task<br>
+          AI &lt;ember_push&gt;
+        </div>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="box queue">
+        <div class="box-title">proactive_queue</div>
+        <div class="box-detail">
+          Vec&lt;String&gt;<br>
+          FIFO, max 10<br>
+          push_notify
+        </div>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="box app">
+        <div class="box-title">App __fetch_push__</div>
+        <div class="box-detail">
+          Long-poll 60s<br>
+          Pop when ready<br>
+          applyPushPayload
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-diagram" style="grid-template-columns: 1fr;">
+      <div class="arrow-down">↓</div>
+    </div>
+
+    <div class="flow-diagram" style="grid-template-columns: 1fr;">
+      <div class="box" style="text-align: left;">
+        <div class="box-title">Long-Poll Sequence</div>
+        <div class="timeline">
+          <div class="timeline-item">
+            <span class="timeline-num">1</span>
+            <span>App (foreground) starts <code>startControlSupervisor()</code></span>
+          </div>
+          <div class="timeline-item">
+            <span class="timeline-num">2</span>
+            <span>Coroutine sends <code>__fetch_push__</code> over QUIC</span>
+          </div>
+          <div class="timeline-item">
+            <span class="timeline-num">3</span>
+            <span>Server: queue empty → <code>push_notify.notified()</code> (blocks up to 60s)</span>
+          </div>
+          <div class="timeline-item">
+            <span class="timeline-num">4</span>
+            <span>External push → queue.push() → notify_one() → server wakes</span>
+          </div>
+          <div class="timeline-item">
+            <span class="timeline-num">5</span>
+            <span>Server pops message, streams to app, returns</span>
+          </div>
+          <div class="timeline-item">
+            <span class="timeline-num">6</span>
+            <span>App receives payload → <code>applyPushPayload()</code> → <code>commitControlToDom()</code></span>
+          </div>
+          <div class="timeline-item">
+            <span class="timeline-num">7</span>
+            <span>Immediately starts next __fetch_push__ (no delay)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Push Source Details</h2>
+      <table>
+        <tr>
+          <th>Source</th>
+          <th>Trigger</th>
+          <th>Message</th>
+        </tr>
+        <tr>
+          <td><code>TCP 4434</code></td>
+          <td>External process connects, writes line</td>
+          <td>Plain text, "marquee", or JSON</td>
+        </tr>
+        <tr>
+          <td><code>push-queue.txt</code></td>
+          <td>Server polls every 1s</td>
+          <td>One line per message; file cleared after read</td>
+        </tr>
+        <tr>
+          <td><code>Proactive task</code></td>
+          <td>Every 30 min</td>
+          <td>LLM check-in → queued</td>
+        </tr>
+        <tr>
+          <td><code>Readiness task</code></td>
+          <td>grpc_server becomes ready</td>
+          <td>"Ready for inference!"</td>
+        </tr>
+        <tr>
+          <td><code>AI output</code></td>
+          <td>Stream contains &lt;ember_push&gt; or __command__</td>
+          <td>Stripped, queued for next __fetch_push__</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>Payload Types (applyPushPayload)</h2>
+      <table>
+        <tr>
+          <th>Payload</th>
+          <th>Action</th>
+        </tr>
+        <tr>
+          <td><code>"app clear"</code> / <code>"__app_clear__"</code></td>
+          <td>reinitializeDisplay() — clear chat, rich, error, input</td>
+        </tr>
+        <tr>
+          <td><code>"refresh"</code></td>
+          <td>Re-render chat + rich area</td>
+        </tr>
+        <tr>
+          <td><code>{"chat":[...],"rich":"...","layout":{}}</code></td>
+          <td>Replace chat, rich HTML, layout hints</td>
+        </tr>
+        <tr>
+          <td><code>{"chatCss":"..."}</code></td>
+          <td>Update ChatWebView styles</td>
+        </tr>
+        <tr>
+          <td>Plain text</td>
+          <td>Append as AI message; TTS if enabled</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

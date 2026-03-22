@@ -12,8 +12,11 @@ object ChatWebView {
     val DEFAULT_CSS = """
         * { box-sizing: border-box; }
         html { scroll-behavior: smooth; }
-        body { margin: 0; padding: 12px; padding-bottom: 80px; font-family: system-ui; color: #fff; background: #000; -webkit-user-select: text; user-select: text; }
-        .message, .message.user, .message.ai { margin: 0 0 8px 0; padding: 0; border: none; border-radius: 0; background: none; white-space: pre-wrap; }
+        body { margin: 0; padding: 12px 16px; padding-bottom: 80px; font-family: system-ui; color: #fff; background: #0D0D0D; -webkit-user-select: text; user-select: text; }
+        .chat { display: flex; flex-direction: column; gap: 12px; }
+        .message { margin: 0; padding: 12px 16px; white-space: pre-wrap; max-width: 85%; word-wrap: break-word; }
+        .message.user { align-self: flex-end; background: rgba(29,161,242,0.2); border: 1px solid rgba(29,161,242,0.3); border-radius: 18px 18px 4px 18px; }
+        .message.ai { align-self: flex-start; background: #1A1A1A; border-radius: 18px 18px 18px 4px; }
     """.trimIndent()
 
     fun configure(webView: WebView) {
@@ -21,7 +24,7 @@ object ChatWebView {
             javaScriptEnabled = true
             domStorageEnabled = true
         }
-        webView.setBackgroundColor(0xFF000000.toInt())
+        webView.setBackgroundColor(0xFF0D0D0D.toInt())
     }
 
     fun render(webView: WebView, messages: List<ChatMessage>, css: String) {
